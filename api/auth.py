@@ -1,6 +1,13 @@
-"""API Key authentication — bcrypt hashed keys stored in SQL Server."""
+"""API Key authentication — bcrypt hashed keys stored in SQL Server.
+
+To avoid bcrypt + 2 DB round-trips on every request, valid keys are cached
+in-memory for KEY_CACHE_TTL seconds, and last_used_at updates are debounced
+to LAST_USED_THROTTLE seconds per key.
+"""
 import secrets
 import logging
+import threading
+import time
 from fastapi import HTTPException, Depends
 from fastapi.security import APIKeyHeader
 from sqlalchemy import text
@@ -10,6 +17,13 @@ from api.config import API_KEY_HEADER, REQUIRE_AUTH
 log = logging.getLogger(__name__)
 
 api_key_scheme = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
+
+# Auth perf: cache resolved keys + debounce last_used_at writes
+KEY_CACHE_TTL = 300           # 5 min — invalidation on key rotation is manual
+LAST_USED_THROTTLE = 60       # write UPDATE at most once per 60s per key
+_key_cache: dict[str, tuple] = {}     # raw_key -> (key_info, cached_at)
+_last_used: dict[int, float] = {}     # key_id -> last_update_ts
+_cache_lock = threading.Lock()
 
 
 def _hash_key(key: str) -> str:
@@ -82,6 +96,48 @@ def lookup_api_key(provided_key: str):
     return None
 
 
+def _resolve_key(api_key: str):
+    """Return key_info dict if valid, else None. Caches hits for KEY_CACHE_TTL."""
+    now = time.time()
+    with _cache_lock:
+        entry = _key_cache.get(api_key)
+        if entry and (now - entry[1]) < KEY_CACHE_TTL:
+            return entry[0]
+
+    info = lookup_api_key(api_key)
+    if info is not None:
+        with _cache_lock:
+            _key_cache[api_key] = (info, now)
+    return info
+
+
+def invalidate_key_cache(api_key: str | None = None):
+    """Drop cached resolution. Call after key create/revoke/rotate."""
+    with _cache_lock:
+        if api_key is None:
+            _key_cache.clear()
+        else:
+            _key_cache.pop(api_key, None)
+
+
+def _maybe_update_last_used(key_id: int):
+    """Throttled last_used_at update — at most once per LAST_USED_THROTTLE seconds per key."""
+    now = time.time()
+    with _cache_lock:
+        prev = _last_used.get(key_id, 0.0)
+        if now - prev < LAST_USED_THROTTLE:
+            return
+        _last_used[key_id] = now
+    try:
+        from db import engine
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE dbo.api_keys SET last_used_at = GETDATE() WHERE id = :id"),
+                         {'id': key_id})
+            conn.commit()
+    except Exception as e:
+        log.warning(f"Failed to update last_used_at: {e}")
+
+
 async def require_api_key(api_key: str = Depends(api_key_scheme)):
     """FastAPI dependency: validate API key, return key info."""
     if not REQUIRE_AUTH:
@@ -93,21 +149,12 @@ async def require_api_key(api_key: str = Depends(api_key_scheme)):
             'message': f'Provide API key in {API_KEY_HEADER} header'
         })
 
-    key_info = lookup_api_key(api_key)
+    key_info = _resolve_key(api_key)
     if not key_info:
         raise HTTPException(status_code=401, detail={
             'code': 'INVALID_API_KEY',
             'message': 'API key is invalid or disabled'
         })
 
-    # Update last_used_at (fire-and-forget)
-    try:
-        from db import engine
-        with engine.connect() as conn:
-            conn.execute(text("UPDATE dbo.api_keys SET last_used_at = GETDATE() WHERE id = :id"),
-                         {'id': key_info['id']})
-            conn.commit()
-    except Exception as e:
-        log.warning(f"Failed to update last_used_at: {e}")
-
+    _maybe_update_last_used(key_info['id'])
     return key_info
