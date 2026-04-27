@@ -119,7 +119,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 # Routers
 from api.routers import (
-    health, overview, utilization, downtime, machines, tech, areas,
+    health, overview, utilization, downtime, machines, tech, areas, inventory,
 )
 app.include_router(health.router)
 app.include_router(overview.router)
@@ -128,6 +128,7 @@ app.include_router(downtime.router)
 app.include_router(machines.router)
 app.include_router(tech.router)
 app.include_router(areas.router)
+app.include_router(inventory.router)
 
 
 @app.get('/', include_in_schema=False)

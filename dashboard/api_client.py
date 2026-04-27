@@ -178,6 +178,29 @@ def fetch_machine_detail(machine_id: str, recent_limit: int = 20) -> dict:
     return _get('/api/v1/machines/detail', params)['data']
 
 
+# ── Inventory ─────────────────────────────────────────────────────────────────
+
+def fetch_inventory_machines() -> pd.DataFrame:
+    """Return the shaped inventory DataFrame — drop-in replacement for
+    dashboard/pages/inventory.py::_load_machines().
+    """
+    rows = _get('/api/v1/inventory/machines')['data'].get('machines', [])
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    for col in ['flag_key', 'flag_automotive', 'flag_gold', 'flag_pm', 'flag_downtime']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+    return df
+
+
+def fetch_inventory_downtime() -> pd.DataFrame:
+    """Per-machine 7-day downtime KPIs (treemap source)."""
+    rows = _get('/api/v1/inventory/downtime')['data'].get('rows', [])
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=['code_machine', 'down_events', 'down_hrs', 'avg_mttr_min'])
+
+
 def fetch_tech_metrics(start: str, end: str, areas=None, shift=None,
                        job_type=None) -> pd.DataFrame:
     """Raw per-tech metrics (no scoring). Matches tech_score_metrics() output."""

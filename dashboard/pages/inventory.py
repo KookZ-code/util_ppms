@@ -114,6 +114,17 @@ layout = html.Div([
 
 # ── Load all machine data once ────────────────────────────────────────────────
 def _load_machines():
+    # Phase 3: API path first, fallback to direct DB
+    try:
+        from api_client import USE_API, fetch_inventory_machines
+        if USE_API:
+            df = fetch_inventory_machines()
+            if not df.empty:
+                return df
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"_load_machines API failed ({_api_err}), fallback to DB")
+
     from db import query_df
     from utils.queries import inventory_all_machines
     df = query_df(inventory_all_machines())
@@ -381,12 +392,20 @@ def update_inventory(areas, models, mfgs, flags, search):
     if not df.empty and areas:
         # Only load heavy downtime query when area is selected
         dt_df = pd.DataFrame(columns=['code_machine', 'down_events', 'down_hrs', 'avg_mttr_min'])
+        # Phase 3: try API first
         try:
-            from db import query_df as qdf2
-            from utils.queries import inventory_machine_downtime
-            dt_df = qdf2(inventory_machine_downtime())
+            from api_client import USE_API, fetch_inventory_downtime
+            if USE_API:
+                dt_df = fetch_inventory_downtime()
         except Exception:
-            pass
+            dt_df = pd.DataFrame(columns=['code_machine', 'down_events', 'down_hrs', 'avg_mttr_min'])
+        if dt_df.empty:
+            try:
+                from db import query_df as qdf2
+                from utils.queries import inventory_machine_downtime
+                dt_df = qdf2(inventory_machine_downtime())
+            except Exception:
+                pass
 
         tm_df = df[['code_machine', 'id_operation', 'model', 'mfg',
                      'flag_key']].copy()
