@@ -142,6 +142,21 @@ def _oracle_overview_extra(selected_areas: Optional[List[str]] = None):
             closed_df = ora_df[(ora_df['status'] == 'Closed')
                                & (ora_df['date_close'] >= shift_start)]
             kpi_extra['closed_shift'] = int(len(closed_df))
+
+        # Build Oracle matrix rows: job_type × (Waiting, On Process, Closed)
+        # Matches dashboard pages/overview.py Oracle matrix aggregation
+        try:
+            import pandas as pd
+            mat = ora_df.groupby('job_type').agg(
+                waiting=('status', lambda x: int((x == 'Waiting').sum())),
+                on_process=('status', lambda x: int((x == 'On Process').sum())),
+                closed=('status', lambda x: int((x == 'Closed').sum())),
+            ).reset_index()
+            mat['total'] = mat['waiting'] + mat['on_process'] + mat['closed']
+            matrix_rows = mat.to_dict('records')
+        except Exception as e:
+            log.warning(f"Oracle matrix build failed: {e}")
+            matrix_rows = []
     except Exception as e:
         log.warning(f"Oracle overview fetch failed: {e}")
 
@@ -226,7 +241,7 @@ def get_overview(selected_areas: Optional[List[str]] = None) -> dict:
     from datetime import datetime
 
     matrix_df, kpi_df = _sql_overview(selected_areas)
-    ora_extra, _ = _oracle_overview_extra(selected_areas)
+    ora_extra, ora_matrix_rows = _oracle_overview_extra(selected_areas)
 
     row = kpi_df.iloc[0] if not kpi_df.empty else {}
     total_machines = int(row.get('total_key_machines', 0) or 0) + ora_extra['machines']
@@ -237,16 +252,34 @@ def get_overview(selected_areas: Optional[List[str]] = None) -> dict:
     # M/C DOWN is a subset of on_process+waiting (same jobs), don't double-subtract
     running = max(0, total_machines - waiting - on_process)
 
-    status_matrix = []
+    # Merge SQL + Oracle matrix: sum per job_type across both sources
+    combined = {}
     if not matrix_df.empty:
         for _, r in matrix_df.iterrows():
-            status_matrix.append({
-                'job_type': str(r.get('job_type') or ''),
+            jt = str(r.get('job_type') or '')
+            combined[jt] = {
+                'job_type': jt,
                 'waiting': int(r.get('waiting', 0) or 0),
                 'on_process': int(r.get('on_process', 0) or 0),
                 'closed': int(r.get('closed', 0) or 0),
                 'total': int(r.get('total', 0) or 0),
-            })
+            }
+    for r in ora_matrix_rows:
+        jt = str(r.get('job_type') or '')
+        if jt in combined:
+            combined[jt]['waiting'] += int(r.get('waiting', 0) or 0)
+            combined[jt]['on_process'] += int(r.get('on_process', 0) or 0)
+            combined[jt]['closed'] += int(r.get('closed', 0) or 0)
+            combined[jt]['total'] += int(r.get('total', 0) or 0)
+        else:
+            combined[jt] = {
+                'job_type': jt,
+                'waiting': int(r.get('waiting', 0) or 0),
+                'on_process': int(r.get('on_process', 0) or 0),
+                'closed': int(r.get('closed', 0) or 0),
+                'total': int(r.get('total', 0) or 0),
+            }
+    status_matrix = sorted(combined.values(), key=lambda x: -x['total'])
 
     return {
         'kpi': {
