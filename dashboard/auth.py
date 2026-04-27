@@ -14,11 +14,11 @@ login_manager.login_view = '/login'
 # ── Role → Page access matrix ─────────────────────────────────────────────────
 # True = allowed, missing = denied
 PAGE_ACCESS = {
-    'admin':      {'/', '/utilization', '/downtime', '/machine-detail',
+    'admin':      {'/', '/live', '/utilization', '/downtime', '/machine-detail',
                    '/timeline', '/inventory', '/admin'},
-    'supervisor': {'/', '/utilization', '/downtime', '/machine-detail',
+    'supervisor': {'/', '/live', '/utilization', '/downtime', '/machine-detail',
                    '/timeline', '/inventory'},
-    'viewer':     {'/', '/utilization', '/downtime', '/machine-detail',
+    'viewer':     {'/', '/live', '/utilization', '/downtime', '/machine-detail',
                    '/inventory'},
 }
 
