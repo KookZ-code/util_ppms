@@ -45,6 +45,95 @@ def _normalize_direct(series: pd.Series) -> pd.Series:
     return ((s - lo) / (hi - lo) * 100).clip(0, 100)
 
 
+def _df_to_records(df: pd.DataFrame) -> list:
+    """DataFrame → list of dicts, NaN→None, numpy→python."""
+    if df is None or df.empty:
+        return []
+    out = []
+    for _, r in df.iterrows():
+        row = {}
+        for k, v in r.items():
+            if v is None:
+                row[k] = None
+            elif isinstance(v, float) and pd.isna(v):
+                row[k] = None
+            elif hasattr(v, 'item'):
+                try:
+                    row[k] = v.item()
+                except Exception:
+                    row[k] = str(v)
+            elif isinstance(v, pd.Timestamp):
+                row[k] = v.isoformat()
+            else:
+                row[k] = v
+        out.append(row)
+    return out
+
+
+def get_tech_metrics(
+    start_date: str,
+    end_date: str,
+    areas: Optional[List[str]] = None,
+    shift: Optional[str] = None,
+    job_type: Optional[str] = None,
+) -> dict:
+    """Raw per-technician metrics (no scoring). Used by Timeline page.
+
+    Returns: technician, job_count, avg_response_min, avg_repair_min,
+             area_count, ftfr_pct. SQL + Oracle merged.
+    """
+    from db import query_df
+    from config import VIEW_NAME
+    from utils.queries import build_tech_where, tech_score_metrics
+
+    where, params = build_tech_where(start_date, end_date, areas, shift, job_type)
+    df = query_df(tech_score_metrics(VIEW_NAME, where), params)
+
+    try:
+        from config import ORA_ENABLED
+        if ORA_ENABLED:
+            from oracle_db import fetch_oracle_data
+            from utils.oracle_agg import ora_tech_score_metrics
+            if not areas or any(a in ('ISO', 'FS') for a in areas):
+                ora = fetch_oracle_data(start_date, end_date, areas, shift)
+                if ora is not None:
+                    if job_type:
+                        ora = ora[ora['job_type'] == job_type]
+                    if not ora.empty:
+                        ora_df = ora_tech_score_metrics(ora)
+                        if not ora_df.empty:
+                            df = pd.concat([df, ora_df], ignore_index=True)
+                            df = df.groupby('technician', as_index=False).agg(
+                                job_count=('job_count', 'sum'),
+                                avg_response_min=('avg_response_min', 'mean'),
+                                avg_repair_min=('avg_repair_min', 'mean'),
+                                area_count=('area_count', 'max'),
+                                ftfr_pct=('ftfr_pct', 'mean'),
+                            )
+    except Exception as e:
+        log.warning(f"Oracle tech metrics failed: {e}")
+
+    return {
+        'rows': _df_to_records(df),
+        'total': int(len(df)),
+        'period': {
+            'start': start_date, 'end': end_date,
+            'shift': shift or 'ALL', 'areas': areas or [],
+            'job_type': job_type,
+        },
+    }
+
+
+def get_tech_list() -> dict:
+    """Return master technician list from dbo.TechnicianList."""
+    from db import query_df
+    from utils.queries import tech_list_query
+    df = query_df(tech_list_query())
+    # Strip whitespace from column names to match dashboard expectations
+    df.columns = [c.strip() for c in df.columns]
+    return {'rows': _df_to_records(df), 'total': int(len(df))}
+
+
 def get_tech_performance(
     start_date: str,
     end_date: str,

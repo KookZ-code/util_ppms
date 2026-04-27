@@ -178,6 +178,28 @@ def fetch_machine_detail(machine_id: str, recent_limit: int = 20) -> dict:
     return _get('/api/v1/machines/detail', params)['data']
 
 
+def fetch_tech_metrics(start: str, end: str, areas=None, shift=None,
+                       job_type=None) -> pd.DataFrame:
+    """Raw per-tech metrics (no scoring). Matches tech_score_metrics() output."""
+    params = {'start': start, 'end': end}
+    if areas:
+        params['areas'] = ','.join(areas)
+    if shift:
+        params['shift'] = shift
+    if job_type:
+        params['job_type'] = job_type
+    rows = _get('/api/v1/tech/metrics', params)['data'].get('rows', [])
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=['technician', 'job_count', 'avg_response_min',
+                 'avg_repair_min', 'area_count', 'ftfr_pct'])
+
+
+def fetch_tech_list() -> pd.DataFrame:
+    """Master technician list from dbo.TechnicianList."""
+    rows = _get('/api/v1/tech/list')['data'].get('rows', [])
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+
 def fetch_machine_records(machine_id: str, limit: int = 200) -> pd.DataFrame:
     """Return raw records for a machine (from vw_job_nokey, all columns)."""
     params = {'id': machine_id, 'limit': limit}

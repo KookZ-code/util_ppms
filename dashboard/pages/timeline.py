@@ -298,6 +298,18 @@ def _empty():
     Input('auto-refresh', 'n_intervals'),
 )
 def load_supv_options(n):
+    # Try API first
+    try:
+        from api_client import USE_API, fetch_tech_list
+        if USE_API:
+            tl = fetch_tech_list()
+            if 'Supv' in tl.columns:
+                supvs = sorted(tl['Supv'].dropna().unique())
+                return [{'label': s, 'value': s} for s in supvs]
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"load_supv_options API failed ({_api_err}), fallback to DB")
+
     from db import query_df
     from utils.queries import tech_list_query
     try:
@@ -336,34 +348,48 @@ def update_scores(n_intervals, start_date, end_date, areas, shift, job_type,
     ef = _empty()
     where, params = build_tech_where(start_date, end_date, areas, shift, job_type)
 
+    # Try API first (Phase 3) — fallback to DB on failure
+    api_used = False
     try:
-        metrics = query_df(tech_score_metrics(VIEW_NAME, where), params)
-        tech_list = query_df(tech_list_query())
-        # Merge Oracle tech metrics
+        from api_client import USE_API, fetch_tech_metrics, fetch_tech_list
+        if USE_API:
+            metrics = fetch_tech_metrics(start_date, end_date, areas, shift, job_type)
+            tech_list = fetch_tech_list()
+            api_used = True
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"update_scores API failed ({_api_err}), fallback to DB")
+        api_used = False
+
+    if not api_used:
         try:
-            from config import ORA_ENABLED
-            if ORA_ENABLED:
-                from oracle_db import fetch_oracle_data
-                from utils.oracle_agg import ora_tech_score_metrics
-                if not areas or any(a in ('ISO', 'FS') for a in areas):
-                    ora = fetch_oracle_data(start_date, end_date, areas, shift)
-                    if ora is not None:
-                        ora_metrics = ora_tech_score_metrics(ora)
-                        if not ora_metrics.empty:
-                            metrics = pd.concat([metrics, ora_metrics], ignore_index=True)
-                            # Re-aggregate if same tech appears in both sources
-                            metrics = metrics.groupby('technician').agg(
-                                job_count=('job_count', 'sum'),
-                                avg_response_min=('avg_response_min', 'mean'),
-                                avg_repair_min=('avg_repair_min', 'mean'),
-                                area_count=('area_count', 'max'),
-                                ftfr_pct=('ftfr_pct', 'mean'),
-                            ).reset_index()
-        except Exception:
-            pass
-    except Exception as e:
-        err = html.Div(f"Error: {e}", style={'color': RED, 'padding': '16px'})
-        return [err], err, ef, ef, ef, None, ef
+            metrics = query_df(tech_score_metrics(VIEW_NAME, where), params)
+            tech_list = query_df(tech_list_query())
+            # Merge Oracle tech metrics
+            try:
+                from config import ORA_ENABLED
+                if ORA_ENABLED:
+                    from oracle_db import fetch_oracle_data
+                    from utils.oracle_agg import ora_tech_score_metrics
+                    if not areas or any(a in ('ISO', 'FS') for a in areas):
+                        ora = fetch_oracle_data(start_date, end_date, areas, shift)
+                        if ora is not None:
+                            ora_metrics = ora_tech_score_metrics(ora)
+                            if not ora_metrics.empty:
+                                metrics = pd.concat([metrics, ora_metrics], ignore_index=True)
+                                # Re-aggregate if same tech appears in both sources
+                                metrics = metrics.groupby('technician').agg(
+                                    job_count=('job_count', 'sum'),
+                                    avg_response_min=('avg_response_min', 'mean'),
+                                    avg_repair_min=('avg_repair_min', 'mean'),
+                                    area_count=('area_count', 'max'),
+                                    ftfr_pct=('ftfr_pct', 'mean'),
+                                ).reset_index()
+            except Exception:
+                pass
+        except Exception as e:
+            err = html.Div(f"Error: {e}", style={'color': RED, 'padding': '16px'})
+            return [err], err, ef, ef, ef, None, ef
 
     if metrics.empty:
         msg = html.Div("No data for selected filters.",
