@@ -96,10 +96,29 @@ def _oracle_overview_extra(selected_areas: Optional[List[str]] = None):
         if ora_df.empty:
             return kpi_extra, matrix_rows
 
+        # Only count currently-open events (exclude Closed from last-24h window)
+        open_mask = ora_df['status'] != 'Closed'
         kpi_extra['machines'] = int(ora_df['code_machine'].nunique())
         kpi_extra['waiting'] = int((ora_df['status'] == 'Waiting').sum())
         kpi_extra['on_process'] = int((ora_df['status'] == 'On Process').sum())
-        kpi_extra['down'] = int((ora_df['job_type'] == 'M/C DOWN').sum())
+        # M/C DOWN currently open (Waiting + On Process), matches SQL down_count
+        kpi_extra['down'] = int(
+            (open_mask & (ora_df['job_type'] == 'M/C DOWN')).sum()
+        )
+        # Closed-this-shift: Closed events since shift start (07:00 day / 19:00 night)
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        if 7 <= now.hour <= 18:
+            shift_start = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        elif now.hour >= 19:
+            shift_start = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        else:
+            shift_start = (now - timedelta(days=1)).replace(
+                hour=19, minute=0, second=0, microsecond=0)
+        if 'date_close' in ora_df.columns:
+            closed_df = ora_df[(ora_df['status'] == 'Closed')
+                               & (ora_df['date_close'] >= shift_start)]
+            kpi_extra['closed_shift'] = int(len(closed_df))
     except Exception as e:
         log.warning(f"Oracle overview fetch failed: {e}")
 
@@ -192,7 +211,8 @@ def get_overview(selected_areas: Optional[List[str]] = None) -> dict:
     on_process = int(row.get('on_process_count', 0) or 0) + ora_extra['on_process']
     down = int(row.get('down_count', 0) or 0) + ora_extra['down']
     closed_shift = int(row.get('closed_this_shift', 0) or 0) + ora_extra['closed_shift']
-    running = max(0, total_machines - waiting - on_process - down)
+    # M/C DOWN is a subset of on_process+waiting (same jobs), don't double-subtract
+    running = max(0, total_machines - waiting - on_process)
 
     status_matrix = []
     if not matrix_df.empty:
