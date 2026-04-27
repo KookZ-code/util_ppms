@@ -1,0 +1,23 @@
+# Credentials & secrets
+.env
+DB_server.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Output artifacts
+Output/
+*.pptx
+*.html
+
+# IDE
+.vscode/
+.idea/
+
+# Demo files
+demo_*.py
+demo_*.html

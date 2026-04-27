@@ -1,0 +1,135 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets & credentials — NEVER commit these
+# ─────────────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+credentials.json
+secrets.json
+secrets.yaml
+secrets.yml
+DB_server.txt
+api_keys.txt
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+coverage.xml
+*.cover
+
+# Type checkers
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Node.js
+# ─────────────────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.npm
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Generated / build output
+# ─────────────────────────────────────────────────────────────────────────────
+Output/
+dist/
+build/
+*.pptx
+*.pdf
+
+# Raw / working data files (business data, often large)
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+raw/
+!raw/README.md
+
+# Logs
+*.log
+*.log.*
+logs/
+
+# Dashboard / API runtime artifacts
+dashboard/screenshots/
+dashboard/demo_layout.html
+dashboard/__pycache__/
+api/static/swagger-ui-bundle.js
+api/static/swagger-ui.css
+api/static/redoc.standalone.js
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IDE / Editor
+# ─────────────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Claude Code / local agent state (user-specific)
+# ─────────────────────────────────────────────────────────────────────────────
+.claude/
+CLAUDE.local.md
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OS junk
+# ─────────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Temp / backup
+# ─────────────────────────────────────────────────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
