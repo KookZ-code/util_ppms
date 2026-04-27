@@ -98,7 +98,30 @@ def _oracle_overview_extra(selected_areas: Optional[List[str]] = None):
 
         # Only count currently-open events (exclude Closed from last-24h window)
         open_mask = ora_df['status'] != 'Closed'
-        kpi_extra['machines'] = int(ora_df['code_machine'].nunique())
+
+        # Total machines: use dbo.machine master table (matches Inventory page).
+        # Oracle areas ISO/FS are registered there with flag_key=1 even though
+        # their downtime events live in Oracle. Falls back to live-event nunique()
+        # if the master count query fails.
+        try:
+            from db import query_df
+            areas_to_count = selected_areas if selected_areas else ['ISO', 'FS']
+            ora_areas_filter = [a for a in areas_to_count if a in ('ISO', 'FS')]
+            if ora_areas_filter:
+                in_clause = ', '.join(f"'{a}'" for a in ora_areas_filter)
+                mc_df = query_df(f"""
+                    SELECT COUNT(*) AS cnt FROM dbo.machine
+                    WHERE id_operation IN ({in_clause})
+                      AND flag_key = 1
+                      AND ISNULL(flag_delete, 0) != 1
+                """)
+                kpi_extra['machines'] = int(mc_df['cnt'].iloc[0]) if not mc_df.empty else 0
+            else:
+                kpi_extra['machines'] = 0
+        except Exception as e:
+            log.warning(f"Oracle machine master count failed, using nunique: {e}")
+            kpi_extra['machines'] = int(ora_df['code_machine'].nunique())
+
         kpi_extra['waiting'] = int((ora_df['status'] == 'Waiting').sum())
         kpi_extra['on_process'] = int((ora_df['status'] == 'On Process').sum())
         # M/C DOWN currently open (Waiting + On Process), matches SQL down_count
