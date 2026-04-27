@@ -150,6 +150,47 @@ def utilization_detail_to_frames(data: dict) -> dict:
     }
 
 
+# ── Machines / areas ──────────────────────────────────────────────────────────
+
+def fetch_areas() -> list:
+    """Return list of areas, each a dict with keys: area, short_name, source, machine_count."""
+    body = _get('/api/v1/areas')
+    return body['data'].get('areas', [])
+
+
+def fetch_machine_list(area=None, key_only=False) -> pd.DataFrame:
+    """Return machine master rows as DataFrame."""
+    params = {}
+    if area:
+        params['area'] = area
+    if key_only:
+        params['key_only'] = 'true'
+    rows = _get('/api/v1/machines', params)['data'].get('machines', [])
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=['machine_id', 'des_machine', 'area', 'area_name',
+                 'mfg', 'model', 'sn', 'short_name', 'flag_key',
+                 'flag_automotive', 'flag_gold'])
+
+
+def fetch_machine_detail(machine_id: str, recent_limit: int = 20) -> dict:
+    """Return machine detail (info + flags + kpis + recent_events)."""
+    params = {'id': machine_id, 'recent_limit': recent_limit}
+    return _get('/api/v1/machines/detail', params)['data']
+
+
+def fetch_machine_records(machine_id: str, limit: int = 200) -> pd.DataFrame:
+    """Return raw records for a machine (from vw_job_nokey, all columns)."""
+    params = {'id': machine_id, 'limit': limit}
+    rows = _get('/api/v1/machines/records', params)['data'].get('records', [])
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    for col in ('datex', 'date_ack', 'date_close', 'date_act', 'opr_start', 'end_time'):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+    return df
+
+
 def overview_to_dataframes(data: dict) -> tuple:
     """Convert /overview JSON into (matrix_df, kpi_dict) matching page expectations."""
     matrix_rows = data.get('status_matrix', [])

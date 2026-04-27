@@ -81,10 +81,26 @@ layout = html.Div([
     Input('auto-refresh', 'n_intervals'),
 )
 def load_areas(key_toggle, n):
-    from db import query_df
     from config import MACHINE_AREAS, MACHINE_TABLE
+    key_only = bool(key_toggle and 'KEY' in key_toggle)
+
+    # Try API first (Phase 3)
     try:
-        key_only = bool(key_toggle and 'KEY' in key_toggle)
+        from api_client import USE_API, fetch_areas
+        if USE_API:
+            rows = fetch_areas()
+            # /areas already returns area + short_name + machine_count; filter key_only is approximate
+            order = {a: i for i, a in enumerate(MACHINE_AREAS)}
+            rows = sorted(rows, key=lambda r: order.get(r.get('area', ''), 999))
+            return [{'label': f"{r.get('short_name') or r['area']} ({r['area']})",
+                     'value': r['area']} for r in rows]
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"load_areas API failed ({_api_err}), fallback to DB")
+
+    # Fallback: direct DB
+    from db import query_df
+    try:
         where = "WHERE [id_operation] IS NOT NULL AND [id_operation] != ''"
         if key_only:
             where += " AND [flag_key] = 1"
@@ -111,10 +127,23 @@ def load_areas(key_toggle, n):
     Input('auto-refresh', 'n_intervals'),
 )
 def load_machines(area, key_toggle, n):
+    key_only = bool(key_toggle and 'KEY' in key_toggle)
+
+    # Try API first
+    try:
+        from api_client import USE_API, fetch_machine_list
+        if USE_API:
+            df = fetch_machine_list(area=area, key_only=key_only)
+            return [{'label': f"{r['machine_id']} — {r['des_machine']}" if r.get('des_machine') else str(r['machine_id']),
+                     'value': r['machine_id']} for _, r in df.iterrows()]
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"load_machines API failed ({_api_err}), fallback to DB")
+
+    # Fallback: direct DB
     from db import query_df
     from utils.queries import distinct_machines_from_master
     try:
-        key_only = bool(key_toggle and 'KEY' in key_toggle)
         params = {'area': area} if area else None
         df = query_df(distinct_machines_from_master(area_filter=area, key_only=key_only), params)
         return [{'label': f"{r['machine_id']} — {r['des_machine']}" if r.get('des_machine') else str(r['machine_id']),
@@ -131,9 +160,43 @@ def load_machines(area, key_toggle, n):
 def update_profile(machine_id):
     if not machine_id:
         return ""
+    from components.machine_profile import make_machine_profile
+
+    # Try API first — /machines/detail returns info + flags in data.info + data.flags
+    try:
+        from api_client import USE_API, fetch_machine_detail
+        if USE_API:
+            data = fetch_machine_detail(machine_id, recent_limit=1)
+            info = data.get('info', {}) or {}
+            if not info.get('machine_id'):
+                return html.Div(f"Machine {machine_id} not found in master table.",
+                                style={'color': MED_GRAY, 'padding': '12px'})
+            # make_machine_profile expects dict w/ code_machine, des_machine, mfg, model,
+            # sn, id_operation, short_name, date_install, flag_* columns
+            flags = data.get('flags', {}) or {}
+            profile = {
+                'code_machine': info.get('machine_id'),
+                'des_machine': info.get('des_machine'),
+                'mfg': info.get('mfg'),
+                'model': info.get('model'),
+                'sn': info.get('sn'),
+                'id_operation': info.get('area'),
+                'short_name': info.get('short_name'),
+                'date_install': data.get('date_install'),
+                'flag_key': flags.get('key', 0),
+                'flag_automotive': flags.get('automotive', 0),
+                'flag_gold': flags.get('gold', 0),
+                'flag_pm': flags.get('pm', 0),
+                'flag_downtime': flags.get('downtime', 0),
+            }
+            return make_machine_profile(profile)
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"update_profile API failed ({_api_err}), fallback to DB")
+
+    # Fallback: direct DB
     from db import query_df
     from utils.queries import machine_master_info
-    from components.machine_profile import make_machine_profile
     try:
         df = query_df(machine_master_info(), {'machine_id': machine_id})
         if df.empty:
@@ -177,20 +240,43 @@ def update_detail(machine_id, n):
     status_col = COLUMN_MAP.get('status',     'job_type')     or 'job_type'
     time_col   = COLUMN_MAP.get('opr_start_time', 'datex')    or 'datex'
 
+    # Try API first
+    api_used = False
     try:
-        # Recent records
-        df = query_df(f"""
-            SELECT TOP 200 *
-            FROM {VIEW_NAME}
-            WHERE [{mid_col}] = :machine_id
-            ORDER BY [{time_col}] DESC
-        """, {'machine_id': machine_id})
+        from api_client import USE_API, fetch_machine_records, fetch_machine_detail
+        if USE_API:
+            df = fetch_machine_records(machine_id, limit=200)
+            detail = fetch_machine_detail(machine_id, recent_limit=1)
+            k = detail.get('kpis', {}) or {}
+            import pandas as _pd
+            kpi_df = _pd.DataFrame([{
+                'total_events': k.get('total_events') or 0,
+                'down_events': k.get('down_events') or 0,
+                'avg_mttr_min': k.get('avg_mttr_min') or 0,
+                'total_down_hrs': k.get('total_down_hrs') or 0,
+                'avg_wait_min': k.get('avg_wait_min') or 0,
+            }])
+            api_used = True
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"update_detail API failed ({_api_err}), fallback to DB")
+        api_used = False
 
-        # Downtime KPIs
-        kpi_df = query_df(machine_downtime_kpis(), {'machine_id': machine_id})
-    except Exception as e:
-        err = html.Div(f"Error: {e}", style={'color': RED, 'padding': '20px'})
-        return [err], empty_fig, err
+    if not api_used:
+        try:
+            # Recent records
+            df = query_df(f"""
+                SELECT TOP 200 *
+                FROM {VIEW_NAME}
+                WHERE [{mid_col}] = :machine_id
+                ORDER BY [{time_col}] DESC
+            """, {'machine_id': machine_id})
+
+            # Downtime KPIs
+            kpi_df = query_df(machine_downtime_kpis(), {'machine_id': machine_id})
+        except Exception as e:
+            err = html.Div(f"Error: {e}", style={'color': RED, 'padding': '20px'})
+            return [err], empty_fig, err
 
     if df.empty:
         msg = html.Div(f"No operational records for {machine_id}.",

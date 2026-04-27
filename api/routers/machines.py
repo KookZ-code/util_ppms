@@ -10,7 +10,9 @@ from api.cache import ttl_cache
 from api.config import CACHE_TTL_MACHINES, CACHE_TTL_DEFAULT, DEFAULT_RATE_LIMIT
 from api.schemas.common import APIResponse, ResponseMeta
 from api.schemas.machine import MachineListData, MachineDetailData
-from api.services.machines_service import get_machines, get_machine_detail
+from api.services.machines_service import (
+    get_machines, get_machine_detail, get_machine_records,
+)
 
 router = APIRouter(prefix='/api/v1/machines', tags=['machines'])
 limiter = Limiter(key_func=get_remote_address)
@@ -24,6 +26,11 @@ async def _cached_list(area, key_only):
 @ttl_cache(ttl=CACHE_TTL_DEFAULT, maxsize=200)
 async def _cached_detail(machine_id, recent_limit):
     return get_machine_detail(machine_id, recent_limit)
+
+
+@ttl_cache(ttl=CACHE_TTL_DEFAULT, maxsize=200)
+async def _cached_records(machine_id, limit):
+    return get_machine_records(machine_id, limit)
 
 
 @router.get('', response_model=APIResponse)
@@ -76,6 +83,31 @@ async def machine_detail_by_query(
 ):
     """Alternative: machine detail via ?id=... query param (avoids URL path issues with '/' in IDs)."""
     return await _build_detail_response(id, recent_limit)
+
+
+@router.get('/records', response_model=APIResponse)
+@limiter.limit(DEFAULT_RATE_LIMIT)
+async def machine_records(
+    request: Request,
+    id: str = Query(..., description='Machine ID'),
+    limit: int = Query(200, ge=1, le=1000),
+    key_info: dict = Depends(require_api_key),
+):
+    """Raw recent records for a machine from vw_job_nokey (all columns).
+
+    Used by Machine Detail page for timeline + table. Cached 5 min.
+    """
+    import time as _time
+    t0 = _time.time()
+    data = await _cached_records(id, limit)
+    elapsed_ms = int((_time.time() - t0) * 1000)
+    return APIResponse(
+        data=data,
+        meta=ResponseMeta(
+            cached=_cached_records.last_hit,
+            query_time_ms=elapsed_ms if not _cached_records.last_hit else 0,
+        ),
+    )
 
 
 @router.get('/{machine_id:path}', response_model=APIResponse)

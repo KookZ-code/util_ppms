@@ -1,9 +1,61 @@
-"""Machines service — master list + detail."""
+"""Machines service — master list + detail + records."""
 import logging
 from typing import Optional, List
 import pandas as pd
 
 log = logging.getLogger(__name__)
+
+
+def _df_to_records(df: pd.DataFrame) -> list:
+    """DataFrame → list of dicts, NaN→None, numpy→python."""
+    if df is None or df.empty:
+        return []
+    out = []
+    for _, r in df.iterrows():
+        row = {}
+        for k, v in r.items():
+            if v is None:
+                row[k] = None
+            elif isinstance(v, float) and pd.isna(v):
+                row[k] = None
+            elif hasattr(v, 'item'):
+                try:
+                    row[k] = v.item()
+                except Exception:
+                    row[k] = str(v)
+            elif isinstance(v, pd.Timestamp):
+                row[k] = v.isoformat()
+            else:
+                row[k] = v
+        out.append(row)
+    return out
+
+
+def get_machine_records(machine_id: str, limit: int = 200) -> dict:
+    """Return raw recent records for a machine from the main SQL view.
+
+    Used by the Machine Detail page timeline + table.
+    Includes all columns from the source view so the dashboard can
+    render them as-is.
+    """
+    from db import query_df
+    from config import VIEW_NAME, COLUMN_MAP
+
+    mid = COLUMN_MAP.get('machine_id', 'code_machine') or 'code_machine'
+    otc = COLUMN_MAP.get('opr_start_time', 'datex') or 'datex'
+
+    df = query_df(f"""
+        SELECT TOP {int(limit)} *
+        FROM {VIEW_NAME}
+        WHERE [{mid}] = :machine_id
+        ORDER BY [{otc}] DESC
+    """, {'machine_id': machine_id.strip()})
+
+    return {
+        'records': _df_to_records(df),
+        'total': int(len(df)),
+        'machine_id': machine_id,
+    }
 
 
 def get_machines(area: Optional[str] = None, key_only: bool = False) -> dict:
