@@ -698,6 +698,16 @@ layout = html.Div([
     Input('auto-refresh', 'n_intervals'),
 )
 def load_machines(areas, n):
+    # Phase 3: try API first
+    try:
+        from api_client import USE_API, fetch_downtime_machines
+        if USE_API:
+            machines = fetch_downtime_machines(areas)
+            return [{'label': m, 'value': m} for m in machines]
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"load_machines (downtime) API failed ({_api_err}), fallback to DB")
+
     from db import query_df
     from config import VIEW_NAME, COLUMN_MAP
     mid = COLUMN_MAP.get('machine_id', 'code_machine') or 'code_machine'
@@ -720,6 +730,19 @@ def load_machines(areas, n):
 # ── Query runner (shared by both callbacks) ───────────────────────────────────
 def _run_queries(job_types, start_date, end_date, areas, machines, shift,
                  reason_col=None):
+    # Phase 3: API path first
+    try:
+        from api_client import USE_API, fetch_downtime_detail
+        if USE_API:
+            frames = fetch_downtime_detail(
+                job_types, start_date, end_date, areas, machines, shift, reason_col)
+            return (frames['reason'], frames['machine'],
+                    frames['daily_shift'], frames['machine_daily'],
+                    frames['symptom_cause'], frames['events'])
+    except Exception as _api_err:
+        import logging
+        logging.warning(f"downtime detail API failed ({_api_err}), fallback to DB")
+
     from db import query_df
     from config import VIEW_NAME, COLUMN_MAP
 

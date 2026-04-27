@@ -1,4 +1,4 @@
-"""Downtime service — event-level list + pareto by reason."""
+"""Downtime service — event-level list + pareto by reason + full detail."""
 import logging
 from typing import List, Optional
 import pandas as pd
@@ -6,6 +6,299 @@ import pandas as pd
 log = logging.getLogger(__name__)
 
 DEFAULT_JOB_TYPES = ['M/C DOWN']
+
+ALL_DT_JOB_TYPES = [
+    'M/C DOWN', 'SETUP', 'SETUP BY OPERATOR', 'PM', 'CONVERT',
+    'FACILITY DOWN', 'ENGINEERING DOWN', 'CLEAN MOLD', 'CHANGE CAP',
+]
+
+
+def _df_to_records(df: pd.DataFrame) -> list:
+    if df is None or df.empty:
+        return []
+    out = []
+    for _, r in df.iterrows():
+        row = {}
+        for k, v in r.items():
+            if v is None:
+                row[k] = None
+            elif isinstance(v, float) and pd.isna(v):
+                row[k] = None
+            elif hasattr(v, 'item'):
+                try:
+                    row[k] = v.item()
+                except Exception:
+                    row[k] = str(v)
+            elif isinstance(v, pd.Timestamp):
+                row[k] = v.isoformat()
+            else:
+                row[k] = v
+        out.append(row)
+    return out
+
+
+def _build_dt_where(otc, ec, sc, ac, mid,
+                    start_date, end_date, areas, machines, shift, job_types):
+    """Mirror pages/downtime.py::_build_where."""
+    from utils.queries import ORACLE_ONLY_AREAS
+    sql_areas = [a for a in areas if a not in ORACLE_ONLY_AREAS] if areas else areas
+    if areas and not sql_areas:
+        return "WHERE 1=0", {}
+
+    phs_jt = ', '.join(f"'{j}'" for j in job_types)
+    clauses = [f"[{sc}] IN ({phs_jt})"]
+    params = {}
+    if start_date:
+        clauses.append(f"[{otc}] >= :start_date"); params['start_date'] = start_date
+    if end_date:
+        clauses.append(f"[{otc}] < DATEADD(DAY, 1, CAST(:end_date AS DATE))"); params['end_date'] = end_date
+    if sql_areas:
+        phs = ', '.join(f":area_{i}" for i in range(len(sql_areas)))
+        clauses.append(f"[{ac}] IN ({phs})")
+        for i, a in enumerate(sql_areas): params[f'area_{i}'] = a
+    if machines:
+        mphs = ', '.join(f":machine_{i}" for i in range(len(machines)))
+        clauses.append(f"[{mid}] IN ({mphs})")
+        for i, m in enumerate(machines): params[f'machine_{i}'] = m
+    if shift == 'DAY':
+        clauses.append(f"DATEPART(HOUR, [{otc}]) BETWEEN 7 AND 18")
+    elif shift == 'NIGHT':
+        clauses.append(f"DATEPART(HOUR, [{otc}]) NOT BETWEEN 7 AND 18")
+    return "WHERE " + " AND ".join(clauses), params
+
+
+def get_downtime_detail(
+    job_types: List[str],
+    start_date: str, end_date: str,
+    areas: Optional[List[str]] = None,
+    machines: Optional[List[str]] = None,
+    shift: Optional[str] = None,
+    reason_col: Optional[str] = None,
+) -> dict:
+    """Bundled detail payload for the Downtime & Setup page.
+
+    Returns 6 datasets merged from SQL Server + Oracle:
+      reason (pareto), machines_by_reason, daily_shift,
+      machine_daily, symptom_cause, events
+    """
+    from db import query_df
+    from config import VIEW_NAME, COLUMN_MAP
+
+    rc  = COLUMN_MAP.get('downtime_reason', 'cause') or 'cause'
+    sym = COLUMN_MAP.get('symptom', 'des_job') or 'des_job'
+    otc = COLUMN_MAP.get('opr_start_time', 'datex') or 'datex'
+    ttc = COLUMN_MAP.get('tech_start_time', 'date_ack') or 'date_ack'
+    ec  = COLUMN_MAP.get('end_time', 'date_close') or 'date_close'
+    mid = COLUMN_MAP.get('machine_id', 'code_machine') or 'code_machine'
+    ac  = COLUMN_MAP.get('machine_area', 'id_operation') or 'id_operation'
+    sc  = COLUMN_MAP.get('status', 'job_type') or 'job_type'
+    grp = reason_col or rc
+
+    where, params = _build_dt_where(
+        otc, ec, sc, ac, mid, start_date, end_date, areas, machines, shift, job_types)
+
+    reason_df = query_df(f"""
+        SELECT [{grp}] AS reason,
+               COUNT(*) AS events,
+               SUM(DATEDIFF(MINUTE, [{ttc}], [{ec}])) / 60.0 AS repair_hrs,
+               SUM(ISNULL(Waiting_time, 0)) / 60.0            AS wait_hrs,
+               SUM(DATEDIFF(MINUTE, [{ttc}], [{ec}])) / 60.0
+                   + SUM(ISNULL(Waiting_time, 0)) / 60.0      AS total_hrs,
+               AVG(DATEDIFF(MINUTE, [{ttc}], [{ec}]))          AS avg_repair_min,
+               AVG(ISNULL(Waiting_time, 0))                    AS avg_wait_min,
+               MAX(ISNULL(Waiting_time, 0))                    AS max_wait_min
+        FROM {VIEW_NAME} {where}
+        AND [{grp}] IS NOT NULL AND [{grp}] != ''
+        AND [{ttc}] IS NOT NULL AND [{ec}] > [{ttc}]
+        GROUP BY [{grp}]
+        ORDER BY total_hrs DESC
+    """, params)
+
+    machine_df = query_df(f"""
+        SELECT [{mid}] AS machine_id,
+               [{grp}] AS reason,
+               COUNT(*) AS event_count,
+               SUM(DATEDIFF(MINUTE, [{ttc}], [{ec}])) / 60.0 AS total_hours
+        FROM {VIEW_NAME} {where}
+        AND [{grp}] IS NOT NULL AND [{grp}] != ''
+        AND [{ttc}] IS NOT NULL AND [{ec}] > [{ttc}]
+        GROUP BY [{mid}], [{grp}]
+        ORDER BY total_hours DESC
+    """, params)
+
+    symptom_cause_df = pd.DataFrame()
+    if reason_col and reason_col != rc:
+        symptom_cause_df = query_df(f"""
+            SELECT [{sym}] AS symptom, [{rc}] AS root_cause,
+                   COUNT(*) AS events,
+                   SUM(DATEDIFF(MINUTE, [{ttc}], [{ec}])) / 60.0 AS repair_hrs,
+                   SUM(ISNULL(Waiting_time, 0)) / 60.0            AS wait_hrs,
+                   SUM(DATEDIFF(MINUTE, [{ttc}], [{ec}])) / 60.0
+                       + SUM(ISNULL(Waiting_time, 0)) / 60.0      AS total_hrs,
+                   AVG(DATEDIFF(MINUTE, [{ttc}], [{ec}]))          AS avg_repair_min,
+                   AVG(ISNULL(Waiting_time, 0))                    AS avg_wait_min
+            FROM {VIEW_NAME} {where}
+            AND [{rc}] IS NOT NULL AND [{rc}] != ''
+            AND [{ttc}] IS NOT NULL AND [{ec}] > [{ttc}]
+            GROUP BY [{sym}], [{rc}]
+            ORDER BY total_hrs DESC
+        """, params)
+
+    machine_daily_df = query_df(f"""
+        SELECT [{mid}] AS machine_id,
+               [{grp}] AS reason,
+               CASE WHEN DATEPART(HOUR, [{otc}]) >= 19
+                    THEN DATEADD(DAY, 1, CAST([{otc}] AS DATE))
+                    ELSE CAST([{otc}] AS DATE) END AS day,
+               CASE WHEN DATEPART(HOUR, [{otc}]) BETWEEN 7 AND 18
+                    THEN 'Day' ELSE 'Night' END AS shift_name,
+               COUNT(*) AS events,
+               SUM(DATEDIFF(MINUTE, [{ttc}], [{ec}])) / 60.0 AS total_hours,
+               SUM(ISNULL(Waiting_time, 0)) / 60.0            AS wait_hrs
+        FROM {VIEW_NAME} {where}
+        AND [{grp}] IS NOT NULL AND [{grp}] != ''
+        AND [{ttc}] IS NOT NULL AND [{ec}] > [{ttc}]
+        GROUP BY [{mid}], [{grp}],
+                 CASE WHEN DATEPART(HOUR, [{otc}]) >= 19
+                      THEN DATEADD(DAY, 1, CAST([{otc}] AS DATE))
+                      ELSE CAST([{otc}] AS DATE) END,
+                 CASE WHEN DATEPART(HOUR, [{otc}]) BETWEEN 7 AND 18
+                      THEN 'Day' ELSE 'Night' END
+    """, params)
+
+    daily_shift_df = query_df(f"""
+        SELECT
+            CASE WHEN DATEPART(HOUR, [{otc}]) >= 19
+                 THEN DATEADD(DAY, 1, CAST([{otc}] AS DATE))
+                 ELSE CAST([{otc}] AS DATE)
+            END AS day,
+            CASE WHEN DATEPART(HOUR, [{otc}]) BETWEEN 7 AND 18
+                 THEN 'Day' ELSE 'Night' END AS shift_name,
+            COUNT(*) AS events,
+            SUM(DATEDIFF(MINUTE, [{ttc}], [{ec}])) / 60.0 AS repair_hrs,
+            SUM(ISNULL(Waiting_time, 0)) / 60.0            AS wait_hrs
+        FROM {VIEW_NAME} {where}
+        AND [{ttc}] IS NOT NULL AND [{ec}] > [{ttc}]
+        GROUP BY
+            CASE WHEN DATEPART(HOUR, [{otc}]) >= 19
+                 THEN DATEADD(DAY, 1, CAST([{otc}] AS DATE))
+                 ELSE CAST([{otc}] AS DATE) END,
+            CASE WHEN DATEPART(HOUR, [{otc}]) BETWEEN 7 AND 18
+                 THEN 'Day' ELSE 'Night' END
+        ORDER BY day, shift_name
+    """, params)
+
+    # Event detail (ALL job types, not just this section's)
+    evt_where, evt_params = _build_dt_where(
+        otc, ec, sc, ac, mid, start_date, end_date, areas, machines, shift,
+        ALL_DT_JOB_TYPES)
+    events_df = query_df(f"""
+        SELECT TOP 500 [{mid}] AS machine_id, [{ac}] AS area,
+               [{sc}] AS job_type, [{sym}] AS symptom, [{rc}] AS cause, [action],
+               [{otc}] AS event_time,
+               ISNULL(by_perform, by_ack) AS tech,
+               ISNULL(Waiting_time, 0) AS wait_min,
+               DATEDIFF(MINUTE, [{ttc}], [{ec}]) AS repair_min,
+               [Package Type] AS package_type, [lot_no], [mpc] AS die_mask
+        FROM {VIEW_NAME} {evt_where}
+        AND [{ttc}] IS NOT NULL AND [{ec}] > [{ttc}]
+        ORDER BY [{otc}] DESC
+    """, evt_params)
+
+    # ── Oracle merge ──────────────────────────────────────────────────────────
+    try:
+        from config import ORA_ENABLED
+        if ORA_ENABLED:
+            from oracle_db import fetch_oracle_data
+            from utils.oracle_agg import (
+                ora_dt_reason, ora_dt_machine, ora_dt_daily_shift,
+                ora_dt_machine_daily, ora_dt_symptom_cause,
+            )
+            if not areas or any(a in ('ISO', 'FS') for a in areas):
+                ora = fetch_oracle_data(start_date, end_date, areas, shift)
+                if ora is not None:
+                    r_col = 'symptom' if reason_col else 'cause'
+                    reason_df = pd.concat(
+                        [reason_df, ora_dt_reason(ora, job_types, r_col)],
+                        ignore_index=True)
+                    reason_df = (reason_df.groupby('reason')
+                                 .agg({c: 'sum' for c in reason_df.columns if c != 'reason'})
+                                 .reset_index()
+                                 .sort_values('total_hrs', ascending=False)
+                                 .reset_index(drop=True))
+                    machine_df = pd.concat(
+                        [machine_df, ora_dt_machine(ora, job_types, r_col)],
+                        ignore_index=True)
+                    daily_shift_df = pd.concat(
+                        [daily_shift_df, ora_dt_daily_shift(ora, job_types)],
+                        ignore_index=True)
+                    daily_shift_df = (daily_shift_df.groupby(['day', 'shift_name'])
+                                      .agg({c: 'sum' for c in daily_shift_df.columns if c not in ('day', 'shift_name')})
+                                      .reset_index()
+                                      .sort_values(['day', 'shift_name']))
+                    machine_daily_df = pd.concat(
+                        [machine_daily_df, ora_dt_machine_daily(ora, job_types, r_col)],
+                        ignore_index=True)
+                    if reason_col and reason_col != rc:
+                        ora_sc = ora_dt_symptom_cause(ora, job_types)
+                        if not ora_sc.empty:
+                            symptom_cause_df = pd.concat(
+                                [symptom_cause_df, ora_sc], ignore_index=True)
+                    if {'machine_id', 'area', 'job_type', 'symptom',
+                        'cause', 'datex', 'badge', 'wait_min', 'repair_min'
+                        }.issubset(ora.columns):
+                        ora_events = ora[['machine_id', 'area', 'job_type',
+                                          'symptom', 'cause', 'datex', 'badge',
+                                          'wait_min', 'repair_min']].copy()
+                        ora_events = ora_events.rename(
+                            columns={'datex': 'event_time', 'badge': 'tech'})
+                        ora_events['wait_min'] = ora_events['wait_min'].round(0).astype(int)
+                        ora_events['repair_min'] = ora_events['repair_min'].round(0).astype(int)
+                        events_df = pd.concat(
+                            [events_df, ora_events], ignore_index=True)
+                        events_df = events_df.sort_values(
+                            'event_time', ascending=False).head(200)
+    except Exception as e:
+        log.warning(f"Oracle downtime merge failed: {e}")
+
+    return {
+        'reason': _df_to_records(reason_df),
+        'machines_by_reason': _df_to_records(machine_df),
+        'daily_shift': _df_to_records(daily_shift_df),
+        'machine_daily': _df_to_records(machine_daily_df),
+        'symptom_cause': _df_to_records(symptom_cause_df),
+        'events': _df_to_records(events_df),
+        'period': {
+            'start': start_date, 'end': end_date,
+            'shift': shift or 'ALL', 'job_types': job_types,
+            'reason_col': reason_col,
+        },
+    }
+
+
+def get_downtime_machines(areas: Optional[List[str]] = None) -> dict:
+    """Distinct machines with M/C DOWN or SETUP events — for filter dropdown."""
+    from db import query_df
+    from config import VIEW_NAME, COLUMN_MAP
+    from utils.queries import ORACLE_ONLY_AREAS
+
+    mid = COLUMN_MAP.get('machine_id', 'code_machine') or 'code_machine'
+    ac  = COLUMN_MAP.get('machine_area', 'id_operation') or 'id_operation'
+    sc  = COLUMN_MAP.get('status', 'job_type') or 'job_type'
+
+    sql_areas = [a for a in areas if a not in ORACLE_ONLY_AREAS] if areas else areas
+    clauses = [f"[{sc}] IN ('M/C DOWN','SETUP','SETUP BY OPERATOR')"]
+    params = {}
+    if sql_areas:
+        phs = ', '.join(f":area_{i}" for i in range(len(sql_areas)))
+        clauses.append(f"[{ac}] IN ({phs})")
+        for i, a in enumerate(sql_areas):
+            params[f'area_{i}'] = a
+    where = "WHERE " + " AND ".join(clauses)
+
+    df = query_df(f"SELECT DISTINCT [{mid}] AS m FROM {VIEW_NAME} {where} ORDER BY [{mid}]", params)
+    machines = [str(r['m']) for _, r in df.iterrows() if r.get('m')]
+    return {'machines': machines, 'total': len(machines)}
 
 
 def _sql_events(start_date: str, end_date: str,

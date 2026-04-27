@@ -178,6 +178,47 @@ def fetch_machine_detail(machine_id: str, recent_limit: int = 20) -> dict:
     return _get('/api/v1/machines/detail', params)['data']
 
 
+# ── Downtime ──────────────────────────────────────────────────────────────────
+
+def fetch_downtime_detail(job_types, start, end,
+                          areas=None, machines=None, shift=None,
+                          reason_col=None) -> dict:
+    """Return bundled downtime payload (see downtime_service.get_downtime_detail).
+    Shaped as a dict of DataFrames matching the page's 6 local variables.
+    """
+    params = {
+        'job_types': ','.join(job_types),
+        'start': start, 'end': end,
+    }
+    if areas:
+        params['areas'] = ','.join(areas)
+    if machines:
+        params['machines'] = ','.join(machines)
+    if shift:
+        params['shift'] = shift
+    if reason_col:
+        params['reason_col'] = reason_col
+    data = _get('/api/v1/downtime/detail', params)['data']
+
+    date_cols = ('event_time', 'day')
+    return {
+        'reason':           _rows_to_df(data.get('reason', [])),
+        'machine':          _rows_to_df(data.get('machines_by_reason', [])),
+        'daily_shift':      _rows_to_df(data.get('daily_shift', []), date_cols),
+        'machine_daily':    _rows_to_df(data.get('machine_daily', []), date_cols),
+        'symptom_cause':    _rows_to_df(data.get('symptom_cause', [])),
+        'events':           _rows_to_df(data.get('events', []), date_cols),
+    }
+
+
+def fetch_downtime_machines(areas=None) -> list:
+    """Return list of machine IDs with downtime events (for filter dropdown)."""
+    params = {}
+    if areas:
+        params['areas'] = ','.join(areas)
+    return _get('/api/v1/downtime/machines', params)['data'].get('machines', [])
+
+
 # ── Inventory ─────────────────────────────────────────────────────────────────
 
 def fetch_inventory_machines() -> pd.DataFrame:
