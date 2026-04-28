@@ -44,11 +44,39 @@ def _sql_overview(selected_areas: Optional[List[str]] = None):
           AND id_operation IN ({area_in})
         GROUP BY job_type ORDER BY total DESC
     """)
+    # Count key machines with WB-head special-casing (matches pages/overview.py
+    # logic, which is needed because WB machines have L/R heads counted as
+    # separate key units):
+    #   - Non-WB: flag_key=1
+    #   - WB single-head (no L/R children): flag_key=1
+    #   - WB L/R head rows where the base machine is flag_key=1
+    wb_in_areas = "'WB' IN (" + area_in + ")"
     kpi_df = query_df(f"""
         SELECT
-            (SELECT COUNT(*) FROM dbo.machine
-             WHERE id_operation IN ({area_in}) AND id_operation != 'WB'
-               AND flag_key = 1 AND ISNULL(flag_delete,0) != 1) AS total_key_machines,
+            (SELECT
+                (SELECT COUNT(*) FROM dbo.machine
+                 WHERE id_operation IN ({area_in}) AND id_operation != 'WB'
+                   AND flag_key = 1 AND ISNULL(flag_delete,0) != 1)
+                +
+                CASE WHEN {wb_in_areas} THEN
+                (SELECT COUNT(*) FROM dbo.machine a
+                 WHERE a.id_operation = 'WB' AND a.flag_key = 1
+                   AND ISNULL(a.flag_delete,0) != 1
+                   AND a.code_machine NOT LIKE '%[LR]'
+                   AND NOT EXISTS (SELECT 1 FROM dbo.machine b
+                       WHERE b.id_operation = 'WB'
+                         AND (b.code_machine = a.code_machine + 'L'
+                              OR b.code_machine = a.code_machine + 'R')))
+                +
+                (SELECT COUNT(*) FROM dbo.machine a
+                 WHERE a.id_operation = 'WB'
+                   AND ISNULL(a.flag_delete,0) != 1
+                   AND a.code_machine LIKE '%[LR]'
+                   AND EXISTS (SELECT 1 FROM dbo.machine b
+                       WHERE b.id_operation = 'WB' AND b.flag_key = 1
+                         AND b.code_machine = LEFT(a.code_machine, LEN(a.code_machine)-1)))
+                ELSE 0 END
+            ) AS total_key_machines,
             (SELECT COUNT(*) FROM [dbo].[job_list]
              WHERE date_close IS NULL AND code_machine != ''
                AND date_ack IS NULL AND id_operation IN ({area_in})) AS waiting_count,
