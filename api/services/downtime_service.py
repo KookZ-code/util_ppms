@@ -247,13 +247,24 @@ def get_downtime_detail(
                     if {'machine_id', 'area', 'job_type', 'symptom',
                         'cause', 'datex', 'badge', 'wait_min', 'repair_min'
                         }.issubset(ora.columns):
-                        ora_events = ora[['machine_id', 'area', 'job_type',
-                                          'symptom', 'cause', 'datex', 'badge',
-                                          'wait_min', 'repair_min']].copy()
+                        base_cols = ['machine_id', 'area', 'job_type',
+                                     'symptom', 'cause', 'datex', 'badge',
+                                     'wait_min', 'repair_min']
+                        # Include product-metadata cols if they're present in
+                        # Oracle (added when _load_all() fetched PKG/LOT/PROD)
+                        extra_cols = [c for c in
+                                      ('package_type', 'lot_no', 'die_mask')
+                                      if c in ora.columns]
+                        ora_events = ora[base_cols + extra_cols].copy()
                         ora_events = ora_events.rename(
                             columns={'datex': 'event_time', 'badge': 'tech'})
                         ora_events['wait_min'] = ora_events['wait_min'].round(0).astype(int)
                         ora_events['repair_min'] = ora_events['repair_min'].round(0).astype(int)
+                        for c in ('package_type', 'lot_no', 'die_mask'):
+                            if c not in ora_events.columns:
+                                ora_events[c] = ''
+                            else:
+                                ora_events[c] = ora_events[c].fillna('').astype(str)
                         events_df = pd.concat(
                             [events_df, ora_events], ignore_index=True)
                         events_df = events_df.sort_values(

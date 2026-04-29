@@ -42,6 +42,7 @@ class OpenJob(BaseModel):
     die_size: Optional[str] = None
     package_type: Optional[str] = None
     wire_type: Optional[str] = None
+    lot_no: Optional[str] = None
     source: str = 'sql'
 
 

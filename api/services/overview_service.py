@@ -256,6 +256,7 @@ def get_open_jobs(selected_areas: Optional[List[str]] = None,
             'die_size': _opt_str(r.get('die_size')),
             'package_type': _opt_str(r.get('package_type')),
             'wire_type': _opt_str(r.get('wire_type')),
+            'lot_no': _opt_str(r.get('lot_no')),
             'source': str(r.get('source') or 'sql'),
         })
     return {'jobs': jobs, 'total': len(jobs)}
