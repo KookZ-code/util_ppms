@@ -35,41 +35,55 @@ except Exception as e:
     print(f"Warning: could not create users table: {e}")
 
 # ── Navbar ────────────────────────────────────────────────────────────────────
-navbar = dbc.Navbar(
-    dbc.Container([
-        dbc.NavbarBrand("Machine Dashboard", href='/', style={'color': '#FFFFFF'}),
-        dbc.Nav([
-            dbc.NavLink("Overview",       href='/',               active='exact'),
-            dbc.NavLink("Utilization",    href='/utilization',    active='exact'),
-            dbc.NavLink("Downtime & Setup", href='/downtime',     active='exact'),
-            dbc.NavLink("Machine Detail", href='/machine-detail', active='exact'),
-            dbc.NavLink("Tech Performance", href='/timeline',      active='exact'),
-            dbc.NavLink("Inventory",      href='/inventory',      active='exact'),
-            dbc.NavLink("Admin",         href='/admin',          active='exact',
-                        id='nav-admin'),
-        ], navbar=True),
-        # User info + Dark mode toggle
-        html.Div([
-            html.Span(id='navbar-user', style={
-                'color': 'rgba(255,255,255,0.7)', 'fontSize': '12px',
-                'marginRight': '10px',
-            }),
-            html.A("Logout", href='/auth/logout', id='navbar-logout', style={
-                'color': '#FFD53A', 'fontSize': '12px', 'marginRight': '14px',
-                'textDecoration': 'none',
-            }),
-            html.Button(
-                "🌙 Dark Mode",
-                id='theme-btn',
-                className='theme-toggle-btn',
-                n_clicks=0,
-            ),
-        ], style={'display': 'flex', 'alignItems': 'center', 'marginLeft': 'auto'}),
-    ], fluid=True),
-    color='#0E3689',
-    dark=True,
-    className='mb-0',
-)
+# Navigation entries — ordered list of (label, href). Visibility is filtered
+# per-role via PAGE_ACCESS inside build_navbar().
+NAV_LINKS = [
+    ('Overview',         '/'),
+    ('Live Board',       '/live'),
+    ('Utilization',      '/utilization'),
+    ('Downtime & Setup', '/downtime'),
+    ('Machine Detail',   '/machine-detail'),
+    ('Tech Performance', '/timeline'),
+    ('Inventory',        '/inventory'),
+    ('Admin',            '/admin'),
+]
+
+
+def build_navbar(role: str):
+    """Build a navbar showing only links the given role is allowed to visit."""
+    from auth import PAGE_ACCESS
+    allowed = PAGE_ACCESS.get(role, set())
+    links = [
+        dbc.NavLink(label, href=href, active='exact',
+                    id=f'nav-{href.strip("/") or "home"}')
+        for label, href in NAV_LINKS
+        if href in allowed
+    ]
+    return dbc.Navbar(
+        dbc.Container([
+            dbc.NavbarBrand("Machine Dashboard", href='/', style={'color': '#FFFFFF'}),
+            dbc.Nav(links, navbar=True),
+            html.Div([
+                html.Span(id='navbar-user', style={
+                    'color': 'rgba(255,255,255,0.7)', 'fontSize': '12px',
+                    'marginRight': '10px',
+                }),
+                html.A("Logout", href='/auth/logout', id='navbar-logout', style={
+                    'color': '#FFD53A', 'fontSize': '12px', 'marginRight': '14px',
+                    'textDecoration': 'none',
+                }),
+                html.Button(
+                    "🌙 Dark Mode",
+                    id='theme-btn',
+                    className='theme-toggle-btn',
+                    n_clicks=0,
+                ),
+            ], style={'display': 'flex', 'alignItems': 'center', 'marginLeft': 'auto'}),
+        ], fluid=True),
+        color='#0E3689',
+        dark=True,
+        className='mb-0',
+    )
 
 # ── App layout ────────────────────────────────────────────────────────────────
 def serve_layout():
@@ -95,7 +109,7 @@ def serve_layout():
         dcc.Interval(id='auto-refresh', interval=REFRESH_MINUTES * 60 * 1000,
                      n_intervals=0),
         dcc.Location(id='url', refresh=False),
-        navbar,
+        build_navbar(current_user.role),
         html.Div(dash.page_container, style={'minHeight': 'calc(100vh - 52px)'}),
         html.Div(
             html.Span(f"Auto-refresh every {REFRESH_MINUTES} min  ·  Microchip Technology  ·  Proprietary and Confidential"),
