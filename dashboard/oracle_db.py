@@ -52,7 +52,7 @@ def _load_all():
         sql = f"""
             SELECT EQUIPMENT_TYPE, EQUIPMENT_ID, S_DATE, P_START, P_STOP,
                    JOB_TYPE, CAUSE, CRITERIA, DOWNTIME, WAIT_TECH, BADGE_NO, SHIFT,
-                   PKG, LOT_ID, PRODUCT_ID
+                   PKG, LOT_ID, PRODUCT_ID, TECHNICIAN_COMMENT
             FROM {ORA_VIEW}
             WHERE P_START IS NOT NULL AND P_STOP IS NOT NULL
               AND P_STOP > P_START
@@ -82,9 +82,10 @@ def _load_all():
             'PKG': 'package_type',
             'LOT_ID': 'lot_no',
             'PRODUCT_ID': 'die_mask',
+            'TECHNICIAN_COMMENT': 'action',
         })
         # Fill nulls so downstream consumers (emails/dashboards) show blank not NaN
-        for col in ('package_type', 'lot_no', 'die_mask'):
+        for col in ('package_type', 'lot_no', 'die_mask', 'action'):
             if col in df.columns:
                 df[col] = df[col].fillna('').astype(str)
         df['area'] = df['EQUIPMENT_TYPE'].map(AREA_REVERSE)

@@ -256,14 +256,14 @@ def get_downtime_detail(
                                      'symptom', 'cause', time_col, 'badge',
                                      'wait_min', 'repair_min']
                         extra_cols = [c for c in
-                                      ('package_type', 'lot_no', 'die_mask')
+                                      ('package_type', 'lot_no', 'die_mask', 'action')
                                       if c in ora.columns]
                         ora_events = ora[base_cols + extra_cols].copy()
                         ora_events = ora_events.rename(
                             columns={time_col: 'event_time', 'badge': 'tech'})
                         ora_events['wait_min'] = ora_events['wait_min'].round(0).astype(int)
                         ora_events['repair_min'] = ora_events['repair_min'].round(0).astype(int)
-                        for c in ('package_type', 'lot_no', 'die_mask'):
+                        for c in ('package_type', 'lot_no', 'die_mask', 'action'):
                             if c not in ora_events.columns:
                                 ora_events[c] = ''
                             else:
