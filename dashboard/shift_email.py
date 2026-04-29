@@ -176,8 +176,15 @@ def _query_shift_data(area, shift_name, start, end):
                 if not ora.empty:
                     ora_ev = ora.rename(columns={
                         'badge': 'tech', 'symptom': 'symptom', 'cause': 'cause',
-                    })[['machine_id', 'area', 'job_type', 'symptom', 'cause',
-                        'event_time', 'tech', 'wait_min', 'repair_min']].copy()
+                    }).copy()
+                    # Ensure package/lot/die_mask exist even on older Oracle data
+                    for col in ('package_type', 'lot_no', 'die_mask'):
+                        if col not in ora_ev.columns:
+                            ora_ev[col] = ''
+                        ora_ev[col] = ora_ev[col].fillna('').astype(str)
+                    ora_ev = ora_ev[['machine_id', 'area', 'job_type', 'symptom', 'cause',
+                                     'event_time', 'tech', 'wait_min', 'repair_min',
+                                     'package_type', 'lot_no', 'die_mask']]
                     ora_ev['action'] = ora_ev['cause']  # Oracle has no separate action
                     ora_ev['wait_min'] = pd.to_numeric(ora_ev['wait_min'], errors='coerce').fillna(0).astype(int)
                     ora_ev['repair_min'] = pd.to_numeric(ora_ev['repair_min'], errors='coerce').fillna(0).astype(int)
