@@ -247,17 +247,20 @@ def get_downtime_detail(
                     if {'machine_id', 'area', 'job_type', 'symptom',
                         'cause', 'datex', 'badge', 'wait_min', 'repair_min'
                         }.issubset(ora.columns):
+                        # Oracle S_DATE (mapped to datex) is midnight-aligned,
+                        # so it would always render as HH:MM = 00:00 in the
+                        # Event Detail table. P_START (mapped to date_ack) is
+                        # the actual tech start timestamp — use it when present.
+                        time_col = 'date_ack' if 'date_ack' in ora.columns else 'datex'
                         base_cols = ['machine_id', 'area', 'job_type',
-                                     'symptom', 'cause', 'datex', 'badge',
+                                     'symptom', 'cause', time_col, 'badge',
                                      'wait_min', 'repair_min']
-                        # Include product-metadata cols if they're present in
-                        # Oracle (added when _load_all() fetched PKG/LOT/PROD)
                         extra_cols = [c for c in
                                       ('package_type', 'lot_no', 'die_mask')
                                       if c in ora.columns]
                         ora_events = ora[base_cols + extra_cols].copy()
                         ora_events = ora_events.rename(
-                            columns={'datex': 'event_time', 'badge': 'tech'})
+                            columns={time_col: 'event_time', 'badge': 'tech'})
                         ora_events['wait_min'] = ora_events['wait_min'].round(0).astype(int)
                         ora_events['repair_min'] = ora_events['repair_min'].round(0).astype(int)
                         for c in ('package_type', 'lot_no', 'die_mask'):

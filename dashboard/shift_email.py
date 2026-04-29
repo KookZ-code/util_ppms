@@ -172,7 +172,9 @@ def _query_shift_data(area, shift_name, start, end):
                         areas=[area], shift=shift_code)
                     if ora_retry is not None:
                         ora = ora_retry
-                        ora['event_time'] = pd.to_datetime(ora['datex'], errors='coerce')
+                        # Use date_ack (P_START) — datex (S_DATE) is midnight-aligned
+                        time_src = 'date_ack' if 'date_ack' in ora.columns else 'datex'
+                        ora['event_time'] = pd.to_datetime(ora[time_src], errors='coerce')
                 if not ora.empty:
                     ora_ev = ora.rename(columns={
                         'badge': 'tech', 'symptom': 'symptom', 'cause': 'cause',
