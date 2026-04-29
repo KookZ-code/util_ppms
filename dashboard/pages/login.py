@@ -30,6 +30,8 @@ layout = html.Div([
                 dcc.Input(
                     type='text', name='username', id='login-username',
                     placeholder='Enter username',
+                    value='guest',
+                    autoComplete='username',
                     style={
                         'width': '100%', 'padding': '10px 14px', 'fontSize': '14px',
                         'border': '1.5px solid #E2E6ED', 'borderRadius': '8px',
@@ -47,13 +49,20 @@ layout = html.Div([
                 dcc.Input(
                     type='password', name='password', id='login-password',
                     placeholder='Enter password',
+                    value='guest',
+                    autoComplete='current-password',
                     style={
                         'width': '100%', 'padding': '10px 14px', 'fontSize': '14px',
                         'border': '1.5px solid #E2E6ED', 'borderRadius': '8px',
                         'outline': 'none', 'fontFamily': 'IBM Plex Sans, sans-serif',
                     },
                 ),
-            ], style={'marginBottom': '24px'}),
+            ], style={'marginBottom': '8px'}),
+
+            # Hint so users know these are the guest defaults
+            html.Div("Default: guest / guest — click Sign In to continue as viewer",
+                     style={'fontSize': '11px', 'color': '#8A96A8',
+                            'marginBottom': '16px', 'textAlign': 'center'}),
 
             html.Button("Sign In", type='submit', style={
                 'width': '100%', 'padding': '12px', 'fontSize': '14px',
