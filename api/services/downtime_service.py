@@ -277,7 +277,11 @@ def get_downtime_detail(
 
 
 def get_downtime_machines(areas: Optional[List[str]] = None) -> dict:
-    """Distinct machines with M/C DOWN or SETUP events — for filter dropdown."""
+    """Distinct machines with M/C DOWN or SETUP events — for filter dropdown.
+
+    Handles Oracle-only areas (ISO/FS) by pulling their machine list from
+    the Oracle in-memory store instead of SQL Server.
+    """
     from db import query_df
     from config import VIEW_NAME, COLUMN_MAP
     from utils.queries import ORACLE_ONLY_AREAS
@@ -286,18 +290,48 @@ def get_downtime_machines(areas: Optional[List[str]] = None) -> dict:
     ac  = COLUMN_MAP.get('machine_area', 'id_operation') or 'id_operation'
     sc  = COLUMN_MAP.get('status', 'job_type') or 'job_type'
 
-    sql_areas = [a for a in areas if a not in ORACLE_ONLY_AREAS] if areas else areas
-    clauses = [f"[{sc}] IN ('M/C DOWN','SETUP','SETUP BY OPERATOR')"]
-    params = {}
-    if sql_areas:
-        phs = ', '.join(f":area_{i}" for i in range(len(sql_areas)))
-        clauses.append(f"[{ac}] IN ({phs})")
-        for i, a in enumerate(sql_areas):
-            params[f'area_{i}'] = a
-    where = "WHERE " + " AND ".join(clauses)
+    sql_areas = [a for a in areas if a not in ORACLE_ONLY_AREAS] if areas else None
+    ora_areas = [a for a in areas if a in ORACLE_ONLY_AREAS] if areas else list(ORACLE_ONLY_AREAS)
 
-    df = query_df(f"SELECT DISTINCT [{mid}] AS m FROM {VIEW_NAME} {where} ORDER BY [{mid}]", params)
-    machines = [str(r['m']) for _, r in df.iterrows() if r.get('m')]
+    machines = []
+
+    # SQL Server side — only query if the user selected at least one non-Oracle
+    # area, or didn't filter at all. If they filtered to Oracle-only areas,
+    # skip SQL entirely instead of returning every machine.
+    if sql_areas or not areas:
+        clauses = [f"[{sc}] IN ('M/C DOWN','SETUP','SETUP BY OPERATOR')"]
+        params = {}
+        if sql_areas:
+            phs = ', '.join(f":area_{i}" for i in range(len(sql_areas)))
+            clauses.append(f"[{ac}] IN ({phs})")
+            for i, a in enumerate(sql_areas):
+                params[f'area_{i}'] = a
+        where = "WHERE " + " AND ".join(clauses)
+        df = query_df(f"SELECT DISTINCT [{mid}] AS m FROM {VIEW_NAME} {where} ORDER BY [{mid}]",
+                      params)
+        machines.extend(str(r['m']) for _, r in df.iterrows() if r.get('m'))
+
+    # Oracle side — ISO/FS machines come from the background-loaded Oracle
+    # dataset (no current SQL Server connection for them).
+    try:
+        from config import ORA_ENABLED
+        if ORA_ENABLED and ora_areas:
+            from oracle_db import _ensure_loaded, _store, _lock
+            _ensure_loaded()
+            with _lock:
+                ora_df = _store.get('df')
+            if ora_df is not None and not ora_df.empty:
+                sub = ora_df[ora_df['area'].isin(ora_areas)]
+                if 'job_type' in sub.columns:
+                    sub = sub[sub['job_type'].isin(
+                        ['M/C DOWN', 'SETUP', 'SETUP BY OPERATOR'])]
+                machines.extend(
+                    str(m) for m in sub['machine_id'].dropna().unique())
+    except Exception as e:
+        log.warning(f"Oracle machine list fetch failed: {e}")
+
+    # Dedupe + sort
+    machines = sorted(set(machines))
     return {'machines': machines, 'total': len(machines)}
 
 
