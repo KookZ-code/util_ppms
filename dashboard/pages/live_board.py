@@ -228,7 +228,12 @@ def update_board(n_intervals, selected_areas, status_filter):
             machines_df = fetch_inventory_machines()
             open_df = fetch_open_jobs(selected_areas, 'ALL')
             areas_data = fetch_areas()
-            areas = sorted({a['area'] for a in areas_data if a.get('area')})
+            # Sort by MACHINE_AREAS (process-flow order) not alphabetical —
+            # matches the Overview page toggle ordering.
+            from config import MACHINE_AREAS as _MA
+            _area_set = {a['area'] for a in areas_data if a.get('area')}
+            _order = {a: i for i, a in enumerate(_MA)}
+            areas = sorted(_area_set, key=lambda a: _order.get(a, 999))
     except Exception as e:
         import logging
         logging.warning(f"LPB API fetch failed: {e}")
