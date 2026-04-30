@@ -1,6 +1,6 @@
-# Machine Status Dashboard
+# EMH — Equipment Maintenance Hub
 
-A real-time manufacturing analytics platform for a semiconductor assembly & test facility. Combines a Dash-based operations dashboard, a FastAPI middleware layer, and automated reporting — all unified across SQL Server and Oracle backends.
+A real-time equipment performance & maintenance intelligence platform for a semiconductor assembly & test facility. Combines a Dash-based operations dashboard, a FastAPI middleware layer, and automated reporting — all unified across SQL Server and Oracle backends.
 
 ```
 ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐

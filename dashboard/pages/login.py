@@ -13,9 +13,13 @@ layout = html.Div([
                 'background': '#FFD53A', 'display': 'inline-block',
                 'marginRight': '10px', 'verticalAlign': 'middle',
             }),
-            html.Span("Machine Dashboard", style={
-                'fontSize': '20px', 'fontWeight': '700', 'color': '#0E3689',
-                'fontFamily': 'DM Sans, sans-serif',
+            html.Span("EMH", style={
+                'fontSize': '22px', 'fontWeight': '800', 'color': '#0E3689',
+                'fontFamily': 'DM Sans, sans-serif', 'letterSpacing': '0.5px',
+            }),
+            html.Div("Equipment Maintenance Hub", style={
+                'fontSize': '12px', 'color': '#4A5568', 'marginTop': '2px',
+                'fontFamily': 'DM Sans, sans-serif', 'letterSpacing': '0.3px',
             }),
         ], style={'textAlign': 'center', 'marginBottom': '30px'}),
 

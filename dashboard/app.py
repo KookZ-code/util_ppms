@@ -21,7 +21,7 @@ app = Dash(
         'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap',
     ],
     suppress_callback_exceptions=True,
-    title="Machine Utilization Dashboard",
+    title="EMH — Equipment Maintenance Hub",
 )
 
 # ── Auth setup ────────────────────────────────────────────────────────────────
@@ -61,7 +61,13 @@ def build_navbar(role: str):
     ]
     return dbc.Navbar(
         dbc.Container([
-            dbc.NavbarBrand("Machine Dashboard", href='/', style={'color': '#FFFFFF'}),
+            dbc.NavbarBrand([
+                html.Span("EMH", style={'fontWeight': '700', 'letterSpacing': '0.5px'}),
+                html.Span(" — Equipment Maintenance Hub", style={
+                    'fontWeight': '400', 'opacity': '0.85',
+                    'fontSize': '13px', 'marginLeft': '6px',
+                }),
+            ], href='/', style={'color': '#FFFFFF'}),
             dbc.Nav(links, navbar=True),
             html.Div([
                 html.Span(id='navbar-user', style={
