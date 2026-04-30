@@ -385,13 +385,16 @@ def update_overview(n_intervals, selected_areas, jobtype_filter):
 
     # ── Status Donut ──────────────────────────────────────────────────────────
     donut = go.Figure()
-    labels = ['Running', 'M/C Down', 'Setup/Convert', 'PM', 'Other']
-    # Compute from open jobs
-    setup_open = len(open_df[open_df['job_type'].isin(['SETUP', 'SETUP BY OPERATOR', 'CONVERT'])])
-    pm_open    = len(open_df[open_df['job_type'] == 'PM'])
-    other_open = len(open_df) - down - setup_open - pm_open
-    values = [running, down, setup_open, pm_open, max(0, other_open)]
-    colors = [GREEN, RED, LIGHT_BLUE, PURPLE, MED_GRAY]
+    labels = ['Running', 'M/C Down', 'Lost Time', 'PM', 'Other']
+    # Lost time = SETUP variants + CONVERT + CLEAN MOLD + CHANGE CAP +
+    # FACILITY DOWN + ENGINEERING DOWN (matches LOST_TYPES in utilization page).
+    LOST_JOB_TYPES = ['SETUP', 'SETUP BY OPERATOR', 'CONVERT', 'CLEAN MOLD',
+                      'CHANGE CAP', 'FACILITY DOWN', 'ENGINEERING DOWN']
+    lost_open = len(open_df[open_df['job_type'].isin(LOST_JOB_TYPES)])
+    pm_open   = len(open_df[open_df['job_type'] == 'PM'])
+    other_open = len(open_df) - down - lost_open - pm_open
+    values = [running, down, lost_open, pm_open, max(0, other_open)]
+    colors = [GREEN, RED, ORANGE, PURPLE, MED_GRAY]
 
     donut.add_trace(go.Pie(
         labels=labels, values=values, hole=0.55,

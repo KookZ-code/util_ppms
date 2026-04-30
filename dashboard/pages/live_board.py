@@ -131,9 +131,13 @@ def _classify_job(job_type: str, status: str) -> str:
     jt = (job_type or '').upper()
     if jt == 'M/C DOWN':
         return 'M/C DOWN'
-    if jt in ('PM',):
+    if jt == 'PM':
         return 'PM'
-    if any(k in jt for k in ('SETUP', 'CONVERT', 'CHANGE')):
+    # Setup bucket covers all lost-time job types (matches LOST_TYPES
+    # in utilization page + api): SETUP variants, CONVERT, CLEAN MOLD,
+    # CHANGE CAP, FACILITY DOWN, ENGINEERING DOWN
+    if any(k in jt for k in ('SETUP', 'CONVERT', 'CHANGE', 'CLEAN',
+                              'FACILITY', 'ENGINEERING')):
         return 'Setup'
     return 'Unknown'
 
