@@ -258,6 +258,41 @@ def update_board(n_intervals, selected_areas, status_filter):
     machines_df = machines_df[machines_df.get('flag_key', 0) == 1].copy()
     machines_df['code_machine'] = machines_df['code_machine'].astype(str).str.strip()
 
+    # ── Replace inventory rows for Oracle-only areas with Oracle-named rows.
+    # dbo.machine names FS/ISO machines (e.g. "F/S# 01") differently from
+    # Oracle live status (e.g. "SIN#019"), so open-jobs lookups would never
+    # match and the alert banner could disagree with the tile grid. For
+    # ISO/FS tiles, use the unique machine_ids seen in the Oracle background
+    # store instead.
+    ORACLE_ONLY = {'ISO', 'FS'}
+    try:
+        from config import ORA_ENABLED
+        if ORA_ENABLED:
+            from oracle_db import _ensure_loaded, _store, _lock
+            _ensure_loaded()
+            with _lock:
+                ora_df = _store.get('df')
+            if ora_df is not None and not ora_df.empty:
+                ora_sub = ora_df[ora_df['area'].isin(ORACLE_ONLY)]
+                ora_keys = (ora_sub.groupby('area')['machine_id']
+                            .unique().to_dict())
+                rows = []
+                for a, mids in ora_keys.items():
+                    for m in mids:
+                        if m is None or not str(m).strip():
+                            continue
+                        rows.append({'code_machine': str(m).strip(),
+                                     'id_operation': a, 'flag_key': 1})
+                if rows:
+                    # Drop inventory-based rows for those Oracle-only areas
+                    machines_df = machines_df[
+                        ~machines_df['id_operation'].isin(ORACLE_ONLY)]
+                    machines_df = pd.concat(
+                        [machines_df, pd.DataFrame(rows)], ignore_index=True)
+    except Exception as e:
+        import logging
+        logging.warning(f"LPB Oracle machine master load failed: {e}")
+
     # ── Build tile data ───────────────────────────────────────────────────────
     # Group open_df by machine_id to find the most-severe active job per machine
     open_by_machine = {}
