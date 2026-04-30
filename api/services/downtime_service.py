@@ -275,6 +275,12 @@ def get_downtime_detail(
     except Exception as e:
         log.warning(f"Oracle downtime merge failed: {e}")
 
+    # Relabel CLEAN MOLD → SETUP BY OPERATOR in event detail so the MOLD-area
+    # tool-cleaning jobs show under the Setup bucket on the dashboard's
+    # Downtime & Setup Analysis page (matches pages/downtime.py behaviour).
+    if not events_df.empty and 'job_type' in events_df.columns:
+        events_df.loc[events_df['job_type'] == 'CLEAN MOLD', 'job_type'] = 'SETUP BY OPERATOR'
+
     return {
         'reason': _df_to_records(reason_df),
         'machines_by_reason': _df_to_records(machine_df),

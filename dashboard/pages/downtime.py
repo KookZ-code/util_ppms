@@ -965,10 +965,14 @@ def _register_section(prefix, job_types, accent_color, bar_label, table_id,
         n_intervals, start_date, end_date, areas, machines, shift = args[:6]
         type_filter = args[6] if len(args) > 6 else None
 
-        # Resolve job types based on toggle
-        active_types = job_types
+        # Resolve job types based on toggle. CLEAN MOLD (MOLD-area tool
+        # cleaning) is bucketed together with SETUP BY OPERATOR so it shows
+        # in the Setup section's charts.
+        active_types = list(job_types)
         if type_filter and type_filter != 'ALL':
             active_types = [type_filter]
+            if type_filter == 'SETUP BY OPERATOR':
+                active_types = ['SETUP BY OPERATOR', 'CLEAN MOLD']
 
         ef = _empty()
         try:
@@ -977,6 +981,12 @@ def _register_section(prefix, job_types, accent_color, bar_label, table_id,
                              reason_col=reason_col)
         except Exception as e:
             return None, None, ef
+
+        # Relabel CLEAN MOLD rows in the event-detail table as
+        # SETUP BY OPERATOR so they filter/display consistently in the
+        # Setup section.
+        if not events_df.empty and 'job_type' in events_df.columns:
+            events_df.loc[events_df['job_type'] == 'CLEAN MOLD', 'job_type'] = 'SETUP BY OPERATOR'
 
         trend = _make_shift_chart(daily_shift_df, accent_color, bar_label)
 
@@ -1258,7 +1268,7 @@ _sym_col = _CM.get('symptom', 'des_job') or 'des_job'
 _register_section('dt',    ['M/C DOWN'],
                   RED, 'Downtime Hours', 'dt-detail-table',
                   reason_col=_sym_col)
-_register_section('setup', ['SETUP', 'SETUP BY OPERATOR'],
+_register_section('setup', ['SETUP', 'SETUP BY OPERATOR', 'CLEAN MOLD'],
                   LIGHT_BLUE, 'Setup Hours', 'setup-detail-table',
                   type_toggle_id='setup-type-toggle')
 
