@@ -324,6 +324,17 @@ def update_board(n_intervals, selected_areas, status_filter):
         import logging
         logging.warning(f"LPB Oracle machine master load failed: {e}")
 
+    # Populate `areas` chip list from machines_df when the API path didn't
+    # fill it (DB-fallback path). Preserves MACHINE_AREAS process-flow order.
+    if not areas and not machines_df.empty:
+        from config import MACHINE_AREAS as _MA
+        _order = {a: i for i, a in enumerate(_MA)}
+        _area_set = set(
+            machines_df['id_operation'].dropna().astype(str).str.strip().unique()
+        )
+        _area_set.discard('')
+        areas = sorted(_area_set, key=lambda a: _order.get(a, 999))
+
     # ── Build tile data ───────────────────────────────────────────────────────
     # Group open_df by machine_id to find the most-severe active job per machine
     open_by_machine = {}
