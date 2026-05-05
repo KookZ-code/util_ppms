@@ -256,6 +256,19 @@ def update_overview(n_intervals, selected_areas, jobtype_filter):
         try:
             from config import ORA_ENABLED
             if not api_used and ORA_ENABLED:
+                # KEY Machines count comes from dbo.machine master (same source
+                # as Inventory page) — runs regardless of whether there are
+                # live events today. Honours the user's area filter.
+                try:
+                    from utils.queries import oracle_key_machine_count
+                    _ora_key = query_df(oracle_key_machine_count(selected_areas))
+                    ora_kpi_extra['machines'] = (int(_ora_key['key_machines'].iloc[0])
+                                                 if not _ora_key.empty else 0)
+                except Exception as _mc_err:
+                    import logging
+                    logging.warning(f"Oracle KEY machine count failed: {_mc_err}")
+                    ora_kpi_extra['machines'] = 0
+
                 from oracle_db import fetch_oracle_live_status
                 ora_live = fetch_oracle_live_status(selected_areas)
                 if ora_live is not None:
@@ -280,24 +293,12 @@ def update_overview(n_intervals, selected_areas, jobtype_filter):
                     if not ora_open.empty:
                         open_df = pd.concat([open_df, ora_open], ignore_index=True)
 
-                    # KPI extra counts
+                    # KPI extra counts from live events (status-based)
                     ora_kpi_extra['waiting'] = int((ora_live['status'] == 'Waiting').sum())
                     ora_kpi_extra['on_process'] = int((ora_live['status'] == 'On Process').sum())
                     ora_kpi_extra['down'] = int(
                         ((ora_live['status'] == 'On Process')
                          & (ora_live['job_type'] == 'M/C DOWN')).sum())
-                    # Count KEY machines from dbo.machine master (same source as Inventory page)
-                    # — NOT from Oracle live events, which only sees machines active today.
-                    try:
-                        from utils.queries import oracle_key_machine_count
-                        _ora_key = query_df(oracle_key_machine_count())
-                        ora_kpi_extra['machines'] = (int(_ora_key['key_machines'].iloc[0])
-                                                     if not _ora_key.empty else 0)
-                    except Exception as _mc_err:
-                        import logging
-                        logging.warning(f"Oracle KEY machine count failed: {_mc_err}")
-                        # Fallback to old behaviour so we never show a lower number than before
-                        ora_kpi_extra['machines'] = int(ora_live['code_machine'].nunique())
                     from datetime import datetime as _dt
                     now = _dt.now()
                     if now.hour >= 7 and now.hour <= 18:

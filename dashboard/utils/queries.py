@@ -614,17 +614,37 @@ def inventory_all_machines():
     """
 
 
-def oracle_key_machine_count():
+def oracle_key_machine_count(areas=None):
     """Count KEY machines in Oracle-managed areas (ISO / FS) from dbo.machine.
 
     Oracle's V_EQDOWNTIME is an event feed (no fleet inventory), so the
     correct source for a headcount is the master machine table — same
     source used by the Inventory page and by overview_status_matrix() for
-    SQL-Server areas. This function honours ORACLE_ONLY_AREAS.
+    SQL-Server areas.
+
+    Args:
+        areas: optional list of user-selected areas. The query is restricted
+            to the intersection of `areas` and ORACLE_ONLY_AREAS. If None or
+            empty, counts every ORACLE_ONLY_AREAS machine. If `areas` is
+            provided but contains no Oracle-managed area (e.g. user filtered
+            to only SQL-Server areas), returns a query that yields 0 rather
+            than a syntax error.
     """
     from config import MACHINE_TABLE
-    # ORACLE_ONLY_AREAS is a module-level constant (not user input) — safe to inline
-    placeholders = ', '.join(f"'{a}'" for a in sorted(ORACLE_ONLY_AREAS))
+
+    # Restrict to Oracle-managed areas only (ISO / FS)
+    if areas:
+        target_areas = sorted(a for a in areas if a in ORACLE_ONLY_AREAS)
+    else:
+        target_areas = sorted(ORACLE_ONLY_AREAS)
+
+    if not target_areas:
+        # User filtered to non-Oracle areas only — short-circuit with 0
+        return "SELECT 0 AS key_machines"
+
+    # target_areas values come from ORACLE_ONLY_AREAS (module-level constant)
+    # — safe to inline, not user input
+    placeholders = ', '.join(f"'{a}'" for a in target_areas)
     return f"""
         SELECT COUNT(*) AS key_machines
         FROM {MACHINE_TABLE}
