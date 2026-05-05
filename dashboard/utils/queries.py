@@ -614,6 +614,26 @@ def inventory_all_machines():
     """
 
 
+def oracle_key_machine_count():
+    """Count KEY machines in Oracle-managed areas (ISO / FS) from dbo.machine.
+
+    Oracle's V_EQDOWNTIME is an event feed (no fleet inventory), so the
+    correct source for a headcount is the master machine table — same
+    source used by the Inventory page and by overview_status_matrix() for
+    SQL-Server areas. This function honours ORACLE_ONLY_AREAS.
+    """
+    from config import MACHINE_TABLE
+    # ORACLE_ONLY_AREAS is a module-level constant (not user input) — safe to inline
+    placeholders = ', '.join(f"'{a}'" for a in sorted(ORACLE_ONLY_AREAS))
+    return f"""
+        SELECT COUNT(*) AS key_machines
+        FROM {MACHINE_TABLE}
+        WHERE [id_operation] IN ({placeholders})
+          AND [flag_key] = 1
+          AND ISNULL([flag_delete], 0) != 1
+    """
+
+
 def inventory_machine_downtime():
     """Per-machine downtime hours (last 7 days) for treemap sizing/coloring."""
     mid = _col('machine_id')

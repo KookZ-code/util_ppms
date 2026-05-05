@@ -286,7 +286,18 @@ def update_overview(n_intervals, selected_areas, jobtype_filter):
                     ora_kpi_extra['down'] = int(
                         ((ora_live['status'] == 'On Process')
                          & (ora_live['job_type'] == 'M/C DOWN')).sum())
-                    ora_kpi_extra['machines'] = int(ora_live['code_machine'].nunique())
+                    # Count KEY machines from dbo.machine master (same source as Inventory page)
+                    # — NOT from Oracle live events, which only sees machines active today.
+                    try:
+                        from utils.queries import oracle_key_machine_count
+                        _ora_key = query_df(oracle_key_machine_count())
+                        ora_kpi_extra['machines'] = (int(_ora_key['key_machines'].iloc[0])
+                                                     if not _ora_key.empty else 0)
+                    except Exception as _mc_err:
+                        import logging
+                        logging.warning(f"Oracle KEY machine count failed: {_mc_err}")
+                        # Fallback to old behaviour so we never show a lower number than before
+                        ora_kpi_extra['machines'] = int(ora_live['code_machine'].nunique())
                     from datetime import datetime as _dt
                     now = _dt.now()
                     if now.hour >= 7 and now.hour <= 18:

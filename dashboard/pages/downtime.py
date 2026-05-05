@@ -911,9 +911,12 @@ def _run_queries(job_types, start_date, end_date, areas, machines, shift,
                         ora_sc = ora_dt_symptom_cause(ora, job_types)
                         if not ora_sc.empty:
                             symptom_cause_df = pd.concat([symptom_cause_df, ora_sc], ignore_index=True)
-                    # Oracle events for detail table
+                    # Oracle events for detail table — include action/package/lot/die_mask
+                    # so the combined detail table matches SQL Server schema (no NaN blanks).
                     ora_events = ora[['machine_id', 'area', 'job_type', 'symptom',
-                                      'cause', 'datex', 'badge', 'wait_min', 'repair_min']].copy()
+                                      'cause', 'action', 'datex', 'badge',
+                                      'wait_min', 'repair_min',
+                                      'package_type', 'lot_no', 'die_mask']].copy()
                     ora_events = ora_events.rename(columns={'datex': 'event_time', 'badge': 'tech'})
                     ora_events['wait_min'] = ora_events['wait_min'].round(0).astype(int)
                     ora_events['repair_min'] = ora_events['repair_min'].round(0).astype(int)

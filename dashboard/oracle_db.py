@@ -244,7 +244,7 @@ def fetch_oracle_live_status(selected_areas=None):
                    P_START, P_STOP, STATUS, BADGE_NO, NAME,
                    NVL(WAIT_TECH, 0) AS WAIT_TECH,
                    NVL(DOWNTIME, 0) AS DOWNTIME,
-                   S_DATE, PKG, LOT_ID, PRODUCT_ID
+                   S_DATE, PKG, LOT_ID, PRODUCT_ID, TECHNICIAN_COMMENT
             FROM EQ_USER.V_EQDOWNTIME
             WHERE EQUIPMENT_TYPE IN ({placeholders})
               AND S_DATE >= TRUNC(SYSDATE) - 1
@@ -300,6 +300,7 @@ def fetch_oracle_live_status(selected_areas=None):
         df['package_type'] = df.get('PKG', pd.Series(dtype=str)).fillna('').astype(str)
         df['lot_no'] = df.get('LOT_ID', pd.Series(dtype=str)).fillna('').astype(str)
         df['die_mask'] = df.get('PRODUCT_ID', pd.Series(dtype=str)).fillna('').astype(str)
+        df['action'] = df.get('TECHNICIAN_COMMENT', pd.Series(dtype=str)).fillna('').astype(str)
         df['mpc'] = df['die_mask']  # alias used by some SQL-Server-style views
         df['wire_type'] = ''
 
