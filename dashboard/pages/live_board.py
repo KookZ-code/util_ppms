@@ -244,9 +244,40 @@ def update_board(n_intervals, selected_areas, status_filter):
             from db import query_df
             from utils.queries import inventory_all_machines
             machines_df = query_df(inventory_all_machines())
-            machines_df = machines_df[machines_df['flag_key'] == 1]
-        except Exception:
-            pass
+            # SQL Server bit columns come back as string/object — normalize to
+            # int so downstream `== 1` comparisons match (same pattern as
+            # inventory.py:_load_machines).
+            if 'flag_key' in machines_df.columns:
+                machines_df['flag_key'] = (pd.to_numeric(machines_df['flag_key'],
+                                                        errors='coerce')
+                                           .fillna(0).astype(int))
+                machines_df = machines_df[machines_df['flag_key'] == 1]
+        except Exception as e:
+            import logging
+            logging.warning(f"LPB machines fallback failed: {e}")
+
+    # Fallback for open jobs when API is unavailable. Without this, all tiles
+    # would render as 'Running' because open_by_machine stays empty.
+    if open_df.empty:
+        try:
+            from db import query_df
+            from utils.queries import overview_open_jobs
+            open_df = query_df(overview_open_jobs())
+            if selected_areas:
+                open_df = open_df[open_df['area'].isin(selected_areas)]
+            # Merge Oracle ISO/FS open jobs so ISO/FS tiles show correct status
+            from config import ORA_ENABLED
+            if ORA_ENABLED:
+                from oracle_db import fetch_oracle_live_status
+                ora_live = fetch_oracle_live_status(selected_areas)
+                if ora_live is not None:
+                    ora_open = ora_live[ora_live['status'] != 'Closed'].copy()
+                    if not ora_open.empty:
+                        open_df = pd.concat([open_df, ora_open],
+                                            ignore_index=True)
+        except Exception as e:
+            import logging
+            logging.warning(f"LPB open-jobs fallback failed: {e}")
 
     if machines_df.empty:
         err = html.Div("Unable to load machine data", style={
