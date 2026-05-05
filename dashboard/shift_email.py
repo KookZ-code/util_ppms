@@ -150,9 +150,13 @@ def _query_shift_data(area, shift_name, start, end):
         if ORA_ENABLED and area in ORACLE_AREA_MAP:
             from oracle_db import fetch_oracle_data, _store, _ensure_loaded
             import time as _t
-            # Ensure Oracle data is loaded (wait up to 45s for background load)
+            # Ensure Oracle data is loaded (wait up to 120s for background load).
+            # Cold-start ordering: thick-mode init (~5s) + SELECT 32k rows (~19s)
+            # can exceed 45s when Oracle is slow, causing ISO/FS merge to silently
+            # skip. 120s gives generous headroom; in production the cache is
+            # already warm long before shift-email jobs fire at 07:05 / 19:05.
             _ensure_loaded()
-            for _ in range(45):
+            for _ in range(120):
                 if _store['df'] is not None:
                     break
                 _t.sleep(1)
