@@ -15,6 +15,7 @@ ORACLE_AREA_MAP = {'ISO': 'ISOLATE', 'FS': 'FORM_SING'}
 AREA_REVERSE = {v: k for k, v in ORACLE_AREA_MAP.items()}
 
 _client_initialized = False
+_client_mode = None  # 'thick' | 'thin' — None until _init_client() completes
 _lock = threading.Lock()
 
 # Full dataset cache — loaded in background, refreshed periodically
@@ -23,14 +24,40 @@ REFRESH_INTERVAL = 600  # seconds (10 min)
 
 
 def _init_client():
-    global _client_initialized
-    if _client_initialized:
-        return
-    import oracledb
-    from config import ORA_CLIENT_LIB
-    if ORA_CLIENT_LIB:
-        oracledb.init_oracle_client(lib_dir=ORA_CLIENT_LIB)
-    _client_initialized = True
+    """Initialize the Oracle client in thick mode if ORA_CLIENT_LIB is set
+    and the Instant Client loads successfully; otherwise fall back to
+    thin mode (pure Python, no Instant Client required).
+
+    Idempotent — safe to call multiple times, including concurrently from
+    multiple threads. init_oracle_client() raises on a second call, so the
+    guard + lock prevents a TOCTOU double-init under free-threaded CPython.
+    """
+    global _client_initialized, _client_mode
+    with _lock:
+        if _client_initialized:
+            return
+        import oracledb
+        from config import ORA_CLIENT_LIB
+
+        if ORA_CLIENT_LIB:
+            try:
+                oracledb.init_oracle_client(lib_dir=ORA_CLIENT_LIB)
+                _client_mode = 'thick'
+                log.info("Oracle client: thick mode (lib_dir=%s)", ORA_CLIENT_LIB)
+            except Exception as e:
+                _client_mode = 'thin'
+                log.warning(
+                    "Oracle thick mode failed (%s: %s) — falling back to thin mode. "
+                    "This is expected on servers without Oracle Instant Client or "
+                    "with a bitness mismatch. Check ORA_CLIENT_LIB=%s is a valid "
+                    "directory containing the correct-bitness Instant Client.",
+                    type(e).__name__, e, ORA_CLIENT_LIB
+                )
+        else:
+            _client_mode = 'thin'
+            log.info("Oracle client: thin mode (ORA_CLIENT_LIB not set)")
+
+        _client_initialized = True
 
 
 def _get_connection():
