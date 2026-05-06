@@ -913,11 +913,14 @@ def _run_queries(job_types, start_date, end_date, areas, machines, shift,
                             symptom_cause_df = pd.concat([symptom_cause_df, ora_sc], ignore_index=True)
                     # Oracle events for detail table — include action/package/lot/die_mask
                     # so the combined detail table matches SQL Server schema (no NaN blanks).
+                    # Use date_ack (P_START) for event_time because datex (S_DATE) is
+                    # midnight-aligned and would render as 00:00:00 — same reasoning as
+                    # commit d8c9617 for shift_email.
                     ora_events = ora[['machine_id', 'area', 'job_type', 'symptom',
-                                      'cause', 'action', 'datex', 'badge',
+                                      'cause', 'action', 'date_ack', 'badge',
                                       'wait_min', 'repair_min',
                                       'package_type', 'lot_no', 'die_mask']].copy()
-                    ora_events = ora_events.rename(columns={'datex': 'event_time', 'badge': 'tech'})
+                    ora_events = ora_events.rename(columns={'date_ack': 'event_time', 'badge': 'tech'})
                     ora_events['wait_min'] = ora_events['wait_min'].round(0).astype(int)
                     ora_events['repair_min'] = ora_events['repair_min'].round(0).astype(int)
                     events_df = pd.concat([events_df, ora_events], ignore_index=True)
