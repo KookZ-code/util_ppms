@@ -425,7 +425,7 @@ def _build_html_email(area, area_name, shift_name, date_str, start, end,
         <!-- Footer -->
         <div style="background:#F0F2F5;padding:12px 24px;border-radius:0 0 10px 10px;
                      text-align:center;font-size:12px;color:#8A96A8">
-            <a href="http://10.50.21.96:8050/downtime" style="color:#0E3689;text-decoration:none;font-weight:600">
+            <a href="http://mth-vm-iestore:8050/downtime" style="color:#0E3689;text-decoration:none;font-weight:600">
                 View Full Dashboard
             </a>
             <br>

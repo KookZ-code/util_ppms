@@ -571,7 +571,7 @@ def build_daily_report(target_date=None):
         <!-- Footer -->
         <div style="background:#F0F2F5;padding:12px 24px;border-radius:0 0 10px 10px;
                      text-align:center;font-size:12px;color:#8A96A8">
-            <a href="http://10.50.21.96:8050/" style="color:#0E3689;text-decoration:none;font-weight:600">
+            <a href="http://mth-vm-iestore:8050/" style="color:#0E3689;text-decoration:none;font-weight:600">
                 View Full Dashboard
             </a>
             <br>
