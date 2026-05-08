@@ -6,7 +6,7 @@ tap-to-filter, zero drilldown. Complements Overview (business-KPI style).
 """
 from datetime import datetime, timedelta
 import dash
-from dash import html, dcc, callback, Input, Output
+from dash import html, dcc, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 import pandas as pd
 
@@ -512,20 +512,28 @@ def update_board(n_intervals, selected_areas, status_filter):
 @callback(
     Output('live-area-store', 'data'),
     Input({'type': 'live-area-chip', 'area': dash.dependencies.ALL}, 'n_clicks'),
-    Input('live-area-store', 'data'),
+    State('live-area-store', 'data'),
     prevent_initial_call=True,
 )
 def on_chip_click(n_clicks_list, current_selected):
     ctx = dash.callback_context
     if not ctx.triggered:
-        return current_selected or []
+        return no_update
+
+    trig = ctx.triggered[0]
+    # auto-refresh rebuilds the chip buttons, which fires this callback with
+    # n_clicks=None/0 for each new element. Only react to a real user click
+    # (n_clicks >= 1) — otherwise we'd wipe the store on every refresh.
+    if not trig.get('value'):
+        return no_update
+
     try:
-        triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+        triggered_id = trig['prop_id'].split('.')[0]
         import json as _json
         triggered = _json.loads(triggered_id)
         area = triggered.get('area')
     except Exception:
-        return current_selected or []
+        return no_update
 
     current = list(current_selected or [])
     if area == '__ALL__':
