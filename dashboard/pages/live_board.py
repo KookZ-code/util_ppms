@@ -36,8 +36,8 @@ ALERT_WAIT_COUNT_THRESHOLD = 3  # N waiting jobs simultaneously
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 layout = html.Div([
-    # Local 30s auto-refresh (separate from the global 5-min interval)
-    dcc.Interval(id='live-refresh', interval=30_000, n_intervals=0),
+    # Local 60s auto-refresh (separate from the global 5-min interval)
+    dcc.Interval(id='live-refresh', interval=60_000, n_intervals=0),
 
     # Page header (custom — bigger than standard, bold)
     html.Div([
@@ -76,16 +76,19 @@ layout = html.Div([
                 'fontSize': '13px', 'fontWeight': '700',
                 'color': DARK_GRAY, 'marginRight': '10px',
                 'letterSpacing': '1px'}),
-            dbc.RadioItems(
+            dbc.Checklist(
                 id='live-status-filter',
                 options=[
-                    {'label': 'ALL', 'value': 'ALL'},
-                    {'label': 'Running', 'value': 'Running'},
                     {'label': 'M/C DOWN', 'value': 'M/C DOWN'},
-                    {'label': 'Setup', 'value': 'Setup'},
-                    {'label': 'Waiting', 'value': 'Waiting'},
+                    {'label': 'Setup',    'value': 'Setup'},
+                    {'label': 'Waiting',  'value': 'Waiting'},
+                    {'label': 'Running',  'value': 'Running'},
+                    {'label': 'PM',       'value': 'PM'},
                 ],
-                value='ALL', inline=True,
+                # Default: problem states only — user can check Running/PM
+                # to see the whole fleet.
+                value=['M/C DOWN', 'Setup', 'Waiting'],
+                inline=True,
                 labelStyle={'marginRight': '14px', 'fontSize': '13px',
                             'fontWeight': '600', 'cursor': 'pointer'},
             ),
@@ -96,8 +99,14 @@ layout = html.Div([
     # Store for the area filter value
     dcc.Store(id='live-area-store', data=[]),
 
+    # Summary line (above tile grid)
+    html.Div(id='live-grid-summary', style={
+        'padding': '10px 24px 4px', 'fontSize': '13px',
+        'color': DARK_GRAY, 'fontWeight': '500',
+    }),
+
     # Tile grid
-    html.Div(id='live-tile-grid', style={'padding': '16px 20px'}),
+    html.Div(id='live-tile-grid', style={'padding': '8px 20px 16px'}),
 
     # Summary bar (bottom)
     html.Div(id='live-summary', style={
@@ -203,10 +212,14 @@ def _chip_style(active: bool) -> dict:
 
 
 # ── Main callback ─────────────────────────────────────────────────────────────
+ALL_STATUSES = ('M/C DOWN', 'Setup', 'Waiting', 'Running', 'PM')
+
+
 @callback(
     Output('live-clock', 'children'),
     Output('live-subheader', 'children'),
     Output('live-alert', 'children'),
+    Output('live-grid-summary', 'children'),
     Output('live-tile-grid', 'children'),
     Output('live-summary', 'children'),
     Output('live-area-chips', 'children'),
@@ -215,6 +228,7 @@ def _chip_style(active: bool) -> dict:
     Input('live-status-filter', 'value'),
 )
 def update_board(n_intervals, selected_areas, status_filter):
+    status_filter = list(status_filter) if status_filter else []
     # ── Data sources ──────────────────────────────────────────────────────────
     machines_df = pd.DataFrame()
     open_df = pd.DataFrame()
@@ -283,7 +297,7 @@ def update_board(n_intervals, selected_areas, status_filter):
         err = html.Div("Unable to load machine data", style={
             'padding': '40px', 'textAlign': 'center',
             'color': RED, 'fontSize': '18px'})
-        return ('', '', '', err, '', [])
+        return ('', '', '', '', err, '', [])
 
     # Only key machines + non-deleted
     machines_df = machines_df[machines_df.get('flag_key', 0) == 1].copy()
@@ -370,7 +384,6 @@ def update_board(n_intervals, selected_areas, status_filter):
         else:
             r = entry['row']
             status_key = entry['status_key']
-            wait_min = r.get('wait_min')
             tech = r.get('tech')
             sub_lines = []
             symptom = r.get('des_job') or ''
@@ -378,36 +391,55 @@ def update_board(n_intervals, selected_areas, status_filter):
                 sub_lines.append(str(symptom)[:26])
             if tech:
                 sub_lines.append(f"Tech: {tech}")
-            if wait_min is not None:
+            # Show wait time for Waiting tiles (still queued for tech),
+            # repair time for On-Process tiles (tech is actively repairing).
+            if status_key == 'Waiting':
+                t_val = r.get('wait_min')
+                t_icon = '⏳'       # hourglass
+            else:
+                t_val = r.get('repair_min')
+                t_icon = '\U0001f527'   # wrench
+            if t_val is not None:
                 try:
-                    sub_lines.append(f"{int(wait_min)} min")
+                    sub_lines.append(f"{t_icon} {int(t_val)}m")
                 except (ValueError, TypeError):
                     pass
 
         counters[status_key] = counters.get(status_key, 0) + 1
 
-        # Status filter
-        if status_filter and status_filter != 'ALL':
-            if status_filter == 'Waiting' and status_key != 'Waiting':
-                continue
-            elif status_filter == 'M/C DOWN' and status_key != 'M/C DOWN':
-                continue
-            elif status_filter == 'Setup' and status_key != 'Setup':
-                continue
-            elif status_filter == 'Running' and status_key != 'Running':
-                continue
+        # Status filter — checklist of statuses to show
+        if status_key not in status_filter:
+            continue
 
         tiles.append(_make_tile(mid, status_key, sub_lines))
 
-    # Grid layout
-    grid = html.Div(tiles, style={
-        'display': 'grid',
-        'gridTemplateColumns': 'repeat(auto-fill, minmax(170px, 1fr))',
-        'gap': '10px',
-    }) if tiles else html.Div(
-        "No machines match current filters",
-        style={'textAlign': 'center', 'color': MED_GRAY,
-               'padding': '40px', 'fontSize': '16px'})
+    # Grid layout + small empty state when no status is selected at all.
+    if not status_filter:
+        grid = html.Div(
+            "Select at least one status to view",
+            style={'textAlign': 'center', 'color': MED_GRAY,
+                   'padding': '60px', 'fontSize': '18px'})
+    elif not tiles:
+        grid = html.Div(
+            "No machines match current filters",
+            style={'textAlign': 'center', 'color': MED_GRAY,
+                   'padding': '40px', 'fontSize': '16px'})
+    else:
+        grid = html.Div(tiles, style={
+            'display': 'grid',
+            'gridTemplateColumns': 'repeat(auto-fill, minmax(170px, 1fr))',
+            'gap': '10px',
+        })
+
+    # Summary line above the grid — visible count + which statuses are hidden
+    hidden = [s for s in ALL_STATUSES if s not in status_filter]
+    if not status_filter:
+        grid_summary = ''
+    else:
+        grid_summary = (
+            f"Showing {len(tiles)} machines"
+            + (f"  —  {', '.join(hidden)} hidden" if hidden else "")
+        )
 
     # ── Alert banner ──────────────────────────────────────────────────────────
     alert = []
@@ -456,7 +488,7 @@ def update_board(n_intervals, selected_areas, status_filter):
     shift_name, mins_left = _current_shift()
     hrs, mins = divmod(mins_left, 60)
     subheader = (f"Shift: {shift_name}  ·  {hrs}h {mins}m left  "
-                 f"·  {now.strftime('%Y-%m-%d')}  ·  Auto-refresh 30s")
+                 f"·  {now.strftime('%Y-%m-%d')}  ·  Auto-refresh 60s")
 
     # Summary bar
     total = sum(counters.values())
@@ -473,7 +505,7 @@ def update_board(n_intervals, selected_areas, status_filter):
     # Area chips
     area_chips = _make_area_chips(areas, selected_areas or [])
 
-    return clock, subheader, alert, grid, summary, area_chips
+    return clock, subheader, alert, grid_summary, grid, summary, area_chips
 
 
 # ── Chip click → update area store ────────────────────────────────────────────
