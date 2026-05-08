@@ -186,3 +186,87 @@ expected, but manual test required:
 
 Single-file change. If issues arise, revert the commit and the page returns
 to single-select + 30s refresh + always-wait-min. No schema/API impact.
+
+---
+
+# Addendum (2026-05-01): Priority-based tile sorting
+
+**Status**: Approved — ready to implement
+**Additional diff**: ~15 lines
+
+## Intent
+
+On the shop floor, a supervisor scanning the board wants to see which
+machines need attention *now*, not in whatever order dbo.machine happens
+to list them. Sort the tile grid so the most-urgent cases are on top.
+
+## Rules
+
+Two-group sort, no visual divider (tile colors separate the groups
+naturally — Yellow vs Red/Orange/Purple).
+
+| Group | Tiles | Sort within |
+|---|---|---|
+| 1 | Waiting (no tech assigned yet) | `wait_min` desc |
+| 2 | M/C DOWN, Setup, PM (tech working) | `repair_min` desc |
+| 3 | Running / Unknown | unchanged (inventory/Oracle store order) |
+
+Longest-waiting / longest-running tile appears first in each group,
+Group 1 appears before Group 2 because a machine with *no tech* is a
+higher operational priority than one already being worked on.
+
+## Implementation sketch
+
+Today the per-machine loop emits `_make_tile(...)` directly into a
+`tiles` list. Change the loop to emit a small tuple instead:
+
+```python
+tile_records.append({
+    'status_key': status_key,
+    'sort_val':   int(t_val) if t_val is not None else 0,
+    'machine_id': mid,
+    'tile':       _make_tile(mid, status_key, sub_lines),
+})
+```
+
+After the loop, bucket + sort:
+
+```python
+waiting_tiles = sorted(
+    (r for r in tile_records if r['status_key'] == 'Waiting'),
+    key=lambda r: -r['sort_val'],
+)
+active_tiles = sorted(
+    (r for r in tile_records
+     if r['status_key'] in ('M/C DOWN', 'Setup', 'PM')),
+    key=lambda r: -r['sort_val'],
+)
+other_tiles = [r for r in tile_records
+               if r['status_key'] not in ('Waiting', 'M/C DOWN',
+                                          'Setup', 'PM')]
+tiles = [r['tile'] for r in (waiting_tiles + active_tiles + other_tiles)]
+```
+
+## Edge cases
+
+- Tile with missing time (e.g. repair_min is None) → `sort_val = 0` →
+  appears at the bottom of its group. Acceptable (no time data = not
+  actionable priority).
+- When only Running is checked → all tiles in Group 3 → unchanged order.
+- Status filter removes a whole group → other groups render uninterrupted.
+
+## Testing
+
+- [ ] Select `[M/C DOWN, Setup, Waiting]` (default) →
+      First visible row is the Waiting tile with largest `⏳` value
+- [ ] Continue down → all Waiting tiles finish before the first M/C DOWN
+- [ ] Within on-process block, largest `🔧` value appears first
+- [ ] Check Running → Running tiles appear AFTER the active block
+- [ ] No tile left behind (total tile count matches summary line)
+
+## Non-goals
+
+- No visual divider between groups (colors already separate)
+- No priority score combining wait + repair (straightforward sort only)
+- Sort stable within equal time values (pandas/python natural order)
+

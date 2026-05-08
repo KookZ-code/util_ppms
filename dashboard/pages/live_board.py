@@ -369,15 +369,19 @@ def update_board(n_intervals, selected_areas, status_filter):
     if selected_areas:
         machines_df = machines_df[machines_df['id_operation'].isin(selected_areas)]
 
-    tiles = []
     counters = {'Running': 0, 'M/C DOWN': 0, 'Setup': 0, 'PM': 0,
                 'Waiting': 0, 'Unknown': 0}
 
+    # Collect records first (with a sortable time value) so we can order the
+    # tile grid by operational priority — longest waiting / longest repair
+    # first within their respective groups.
+    tile_records = []
     for _, m in machines_df.iterrows():
         mid = m['code_machine']
         if not mid:
             continue
         entry = open_by_machine.get(mid)
+        t_val = None
         if entry is None:
             status_key = 'Running'
             sub_lines = []
@@ -411,7 +415,33 @@ def update_board(n_intervals, selected_areas, status_filter):
         if status_key not in status_filter:
             continue
 
-        tiles.append(_make_tile(mid, status_key, sub_lines))
+        try:
+            sort_val = int(t_val) if t_val is not None else 0
+        except (ValueError, TypeError):
+            sort_val = 0
+        tile_records.append({
+            'status_key': status_key,
+            'sort_val':   sort_val,
+            'tile':       _make_tile(mid, status_key, sub_lines),
+        })
+
+    # Priority sort:
+    #   Group 1 — Waiting (no tech yet, most urgent): by wait_min desc
+    #   Group 2 — On-Process (tech working): by repair_min desc
+    #   Group 3 — Running / Unknown: original order (not operational priority)
+    waiting_group = sorted(
+        (r for r in tile_records if r['status_key'] == 'Waiting'),
+        key=lambda r: -r['sort_val'],
+    )
+    active_group = sorted(
+        (r for r in tile_records
+         if r['status_key'] in ('M/C DOWN', 'Setup', 'PM')),
+        key=lambda r: -r['sort_val'],
+    )
+    other_group = [r for r in tile_records
+                   if r['status_key'] not in ('Waiting', 'M/C DOWN',
+                                              'Setup', 'PM')]
+    tiles = [r['tile'] for r in (waiting_group + active_group + other_group)]
 
     # Grid layout + small empty state when no status is selected at all.
     if not status_filter:
