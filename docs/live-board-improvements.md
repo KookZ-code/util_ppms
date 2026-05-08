@@ -266,7 +266,92 @@ tiles = [r['tile'] for r in (waiting_tiles + active_tiles + other_tiles)]
 
 ## Non-goals
 
-- No visual divider between groups (colors already separate)
 - No priority score combining wait + repair (straightforward sort only)
 - Sort stable within equal time values (pandas/python natural order)
+
+---
+
+# Addendum 2 (2026-05-01): Sectioned layout
+
+**Status**: Approved — ready to implement
+**Additional diff**: ~30 lines
+
+## Intent
+
+Make the priority groups visually distinct with header bars so a supervisor
+scanning from a distance can tell at a glance whether there are any
+"Waiting for tech" cases — without reading tile colors.
+
+## Section blocks
+
+Three sections, each with a small header bar above the grid:
+
+| Section | Label | Accent stripe | Light tint bg | Shown when |
+|---|---|---|---|---|
+| 1 | WAITING FOR TECH · N machines | YELLOW | #FFF9E0 | any Waiting tile visible |
+| 2 | ON PROCESS · N machines | RED | #FFF0F0 | any M/C DOWN / Setup / PM tile visible |
+| 3 | RUNNING · N machines | GREEN | #F0FBF0 | any Running tile visible |
+
+Sections with zero tiles are omitted (not shown as empty headers).
+
+## Header style
+
+- 4px left stripe in accent color
+- Very light tinted background
+- Text: bold uppercase title + subtle "· N machines" count
+- Compact padding (6-10px)
+
+## Implementation sketch
+
+Add helper:
+
+```python
+def _render_section(title, accent_color, bg_tint, tiles):
+    if not tiles:
+        return None
+    header = html.Div([
+        html.Span(title, style={...bold uppercase...}),
+        html.Span(f"  ·  {len(tiles)} machines", style={...muted...}),
+    ], style={
+        'background': bg_tint,
+        'borderLeft': f'4px solid {accent_color}',
+        'padding': '6px 14px',
+        'marginTop': '12px', 'marginBottom': '8px',
+        'borderRadius': '3px',
+    })
+    grid = html.Div(tiles, style={'display':'grid', ...existing grid style})
+    return html.Div([header, grid])
+```
+
+In `update_board`, replace the single `grid = html.Div(tiles, ...)` block
+with stacked sections:
+
+```python
+sections = []
+if waiting_group:
+    sections.append(_render_section('WAITING FOR TECH', YELLOW,
+                                     '#FFF9E0',
+                                     [r['tile'] for r in waiting_group]))
+if active_group:
+    sections.append(_render_section('ON PROCESS', RED,
+                                     '#FFF0F0',
+                                     [r['tile'] for r in active_group]))
+if other_group:
+    sections.append(_render_section('RUNNING', GREEN,
+                                     '#F0FBF0',
+                                     [r['tile'] for r in other_group]))
+
+if not status_filter:
+    grid = <"Select at least one status" message>
+elif not sections:
+    grid = <"No machines match current filters" message>
+else:
+    grid = html.Div([s for s in sections if s])
+```
+
+## Non-goals
+
+- No collapsible/accordion sections (overkill for TV)
+- No divider lines between tiles within a group (grid gap is enough)
+- No animation when section counts change (auto-refresh is enough feedback)
 

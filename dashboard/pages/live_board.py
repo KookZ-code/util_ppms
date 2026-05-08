@@ -211,8 +211,49 @@ def _chip_style(active: bool) -> dict:
     }
 
 
+def _render_section(title: str, accent_color: str, bg_tint: str,
+                    tiles: list):
+    """Render a section: colored header bar + tile grid underneath.
+
+    Returns None if tiles is empty so the caller can skip appending it.
+    Used by the Live Board to visually separate Waiting / On-Process /
+    Running groups after the priority sort.
+    """
+    if not tiles:
+        return None
+    header = html.Div([
+        html.Span(title, style={
+            'fontWeight': '800', 'fontSize': '13px',
+            'letterSpacing': '1.2px', 'color': DARK_TEXT,
+        }),
+        html.Span(f"  ·  {len(tiles)} machines", style={
+            'color': DARK_GRAY, 'fontWeight': '500',
+            'fontSize': '12px', 'marginLeft': '2px',
+        }),
+    ], style={
+        'background': bg_tint,
+        'borderLeft': f'5px solid {accent_color}',
+        'padding': '7px 14px',
+        'marginTop': '14px',
+        'marginBottom': '8px',
+        'borderRadius': '3px',
+    })
+    grid = html.Div(tiles, style={
+        'display': 'grid',
+        'gridTemplateColumns': 'repeat(auto-fill, minmax(170px, 1fr))',
+        'gap': '10px',
+    })
+    return html.Div([header, grid])
+
+
 # ── Main callback ─────────────────────────────────────────────────────────────
 ALL_STATUSES = ('M/C DOWN', 'Setup', 'Waiting', 'Running', 'PM')
+
+# Light-tint backgrounds for each section header (very subtle so the tile
+# colors remain the eye-catching element).
+SECTION_BG_WAITING  = '#FFF9E0'   # pale yellow
+SECTION_BG_ACTIVE   = '#FFF0F0'   # pale red/pink
+SECTION_BG_RUNNING  = '#F0FBF0'   # pale green
 
 
 @callback(
@@ -443,23 +484,32 @@ def update_board(n_intervals, selected_areas, status_filter):
                                               'Setup', 'PM')]
     tiles = [r['tile'] for r in (waiting_group + active_group + other_group)]
 
-    # Grid layout + small empty state when no status is selected at all.
+    # Build sections — one per group with a colored header bar. Sections
+    # with zero tiles collapse to None and are dropped.
+    sections = [
+        _render_section('WAITING FOR TECH', YELLOW, SECTION_BG_WAITING,
+                        [r['tile'] for r in waiting_group]),
+        _render_section('ON PROCESS', RED, SECTION_BG_ACTIVE,
+                        [r['tile'] for r in active_group]),
+        _render_section('RUNNING', GREEN, SECTION_BG_RUNNING,
+                        [r['tile'] for r in other_group]),
+    ]
+    sections = [s for s in sections if s is not None]
+
+    # Empty-state messages: differentiate "no status checked" vs
+    # "filters matched nothing" so the user knows what to fix.
     if not status_filter:
         grid = html.Div(
             "Select at least one status to view",
             style={'textAlign': 'center', 'color': MED_GRAY,
                    'padding': '60px', 'fontSize': '18px'})
-    elif not tiles:
+    elif not sections:
         grid = html.Div(
             "No machines match current filters",
             style={'textAlign': 'center', 'color': MED_GRAY,
                    'padding': '40px', 'fontSize': '16px'})
     else:
-        grid = html.Div(tiles, style={
-            'display': 'grid',
-            'gridTemplateColumns': 'repeat(auto-fill, minmax(170px, 1fr))',
-            'gap': '10px',
-        })
+        grid = html.Div(sections)
 
     # Summary line above the grid — visible count + which statuses are hidden
     hidden = [s for s in ALL_STATUSES if s not in status_filter]
