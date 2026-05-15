@@ -15,9 +15,9 @@ login_manager.login_view = '/login'
 # True = allowed, missing = denied
 PAGE_ACCESS = {
     'admin':      {'/', '/live', '/utilization', '/downtime', '/machine-detail',
-                   '/timeline', '/inventory', '/admin'},
+                   '/timeline', '/inventory', '/store-items', '/admin'},
     'supervisor': {'/', '/live', '/utilization', '/downtime', '/machine-detail',
-                   '/timeline', '/inventory'},
+                   '/timeline', '/inventory', '/store-items'},
     'viewer':     {'/', '/live', '/utilization', '/downtime', '/machine-detail',
                    '/inventory'},
 }

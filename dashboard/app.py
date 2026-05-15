@@ -34,9 +34,7 @@ try:
 except Exception as e:
     print(f"Warning: could not create users table: {e}")
 
-# ── Navbar ────────────────────────────────────────────────────────────────────
-# Navigation entries — ordered list of (label, href). Visibility is filtered
-# per-role via PAGE_ACCESS inside build_navbar().
+# ── Sidebar navigation ───────────────────────────────────────────────────────
 NAV_LINKS = [
     ('Overview',         '/'),
     ('Live Board',       '/live'),
@@ -45,105 +43,126 @@ NAV_LINKS = [
     ('Machine Detail',   '/machine-detail'),
     ('Tech Performance', '/timeline'),
     ('Inventory',        '/inventory'),
+    ('Store Items',      '/store-items'),
     ('Admin',            '/admin'),
 ]
 
+# Nav icons — emoji fallback: simple, reliable, zero SVG complexity
+NAV_ICONS = {
+    '/':               '⊞',
+    '/live':           '◈',
+    '/utilization':    '◎',
+    '/downtime':       '⚙',
+    '/machine-detail': '▣',
+    '/timeline':       '▤',
+    '/inventory':      '▦',
+    '/store-items':    '◻',
+    '/admin':          '◈',
+}
 
-def build_navbar(role: str, is_authenticated: bool = True):
-    """Build a navbar showing only links the given role is allowed to visit.
+# Map label → emoji for bottom actions
+_MOON  = '🌙'
+_LOCK  = '🔒'
+_LOGIN = '🔑'
 
-    is_authenticated=False → shows a "Login" button instead of "Logout" so
-    guest/anonymous users can switch to a named account.
-    """
+
+def _icon(href):
+    return html.Span(NAV_ICONS.get(href, '·'), className='sb-icon',
+                     style={'fontSize': '14px', 'lineHeight': '1',
+                            'display': 'flex', 'alignItems': 'center',
+                            'justifyContent': 'center'})
+
+
+def build_sidebar(role: str, is_authenticated: bool = True, user_label: str = ''):
     from auth import PAGE_ACCESS
     allowed = PAGE_ACCESS.get(role, set())
-    links = [
-        dbc.NavLink(label, href=href, active='exact',
-                    id=f'nav-{href.strip("/") or "home"}')
+
+    nav_items = [
+        html.A(
+            [_icon(href), html.Span(label, className='sb-label')],
+            href=href,
+            className='sb-item',
+            **{'data-label': label},
+        )
         for label, href in NAV_LINKS
         if href in allowed
     ]
-    # Show Logout only for named (non-guest) authenticated users;
-    # everyone else sees a Login link so they can elevate to a named role.
-    auth_btn = (
-        html.A("Logout", href='/auth/logout', id='navbar-logout', style={
-            'color': '#FFD53A', 'fontSize': '12px', 'marginRight': '14px',
-            'textDecoration': 'none', 'fontWeight': '600',
-        })
-        if is_authenticated
-        else html.A("Login", href='/login', id='navbar-logout', style={
-            'color': '#FFD53A', 'fontSize': '12px', 'marginRight': '14px',
-            'textDecoration': 'none', 'fontWeight': '600',
-        })
-    )
-    return dbc.Navbar(
-        dbc.Container([
-            dbc.NavbarBrand([
-                html.Span("EMH", style={'fontWeight': '700', 'letterSpacing': '0.5px'}),
-                html.Span(" — Equipment Maintenance Hub", style={
-                    'fontWeight': '400', 'opacity': '0.85',
-                    'fontSize': '13px', 'marginLeft': '6px',
-                }),
-            ], href='/', style={'color': '#FFFFFF'}),
-            dbc.Nav(links, navbar=True),
-            html.Div([
-                html.Span(id='navbar-user', style={
-                    'color': 'rgba(255,255,255,0.7)', 'fontSize': '12px',
-                    'marginRight': '10px',
-                }),
-                auth_btn,
-                html.Button(
-                    "🌙 Dark Mode",
-                    id='theme-btn',
-                    className='theme-toggle-btn',
-                    n_clicks=0,
-                ),
-            ], style={'display': 'flex', 'alignItems': 'center', 'marginLeft': 'auto'}),
-        ], fluid=True),
-        color='#0E3689',
-        dark=True,
-        className='mb-0',
-    )
+
+    auth_label = 'Logout' if is_authenticated else 'Login'
+    auth_icon  = _LOCK if is_authenticated else _LOGIN
+    auth_href  = '/auth/logout' if is_authenticated else '/login'
+
+    return html.Div(id='sidebar', className='sidebar', children=[
+        # Header
+        html.Div(className='sb-header', children=[
+            html.Div('EMH', className='sb-logo-dot'),
+            html.Div(className='sb-logo-text', children=[
+                html.Span('EMH', className='sb-logo-title'),
+                html.Span('Equipment Maintenance Hub', className='sb-logo-sub'),
+            ]),
+            html.Button('≡', id='sb-toggle-btn', className='sb-toggle',
+                        title='Toggle sidebar', n_clicks=0),
+        ]),
+
+        # Main nav
+        html.Div(nav_items, className='sb-nav'),
+
+        # Bottom: user label + dark mode + auth
+        html.Div(className='sb-bottom', children=[
+            html.Div(user_label, className='sb-user'),
+            html.Button(
+                [html.Span(_MOON, className='sb-icon',
+                           style={'fontSize': '14px', 'display': 'flex',
+                                  'alignItems': 'center', 'justifyContent': 'center'}),
+                 html.Span('Dark Mode', className='sb-label')],
+                id='theme-btn',
+                className='sb-item',
+                n_clicks=0,
+                style={'background': 'none', 'border': 'none', 'width': '100%',
+                       'textAlign': 'left', 'cursor': 'pointer', 'padding': '0',
+                       'font': 'inherit'},
+            ),
+            html.A(
+                [html.Span(auth_icon, className='sb-icon',
+                           style={'fontSize': '14px', 'display': 'flex',
+                                  'alignItems': 'center', 'justifyContent': 'center'}),
+                 html.Span(auth_label, className='sb-label')],
+                href=auth_href,
+                className='sb-item',
+                **{'data-label': auth_label},
+            ),
+        ]),
+    ])
 
 # ── App layout ────────────────────────────────────────────────────────────────
 def serve_layout():
     """Dynamic layout — unauthenticated users get guest/viewer access
     (no login wall). They see a 'Login' button to switch to a named account.
     """
-    if not current_user.is_authenticated:
-        # Anonymous visitor — show the full dashboard as guest (viewer role).
-        # build_navbar('viewer', is_authenticated=False) shows Login not Logout.
+    def _shell(role, is_authenticated, user_label=''):
         return html.Div([
             dcc.Store(id='theme-store', storage_type='local', data='light'),
             dcc.Store(id='global-area-filter', storage_type='session'),
             dcc.Interval(id='auto-refresh', interval=REFRESH_MINUTES * 60 * 1000,
                          n_intervals=0),
             dcc.Location(id='url', refresh=False),
-            build_navbar('viewer', is_authenticated=False),
-            html.Div(dash.page_container, style={'minHeight': 'calc(100vh - 52px)'}),
-            html.Div(
-                html.Span(f"Auto-refresh every {REFRESH_MINUTES} min  ·  Microchip Technology  ·  Proprietary and Confidential"),
-                className='footer-bar',
-            ),
-            html.Script('document.getElementById("navbar-user").textContent = "Guest (viewer)";'),
+            html.Div([
+                build_sidebar(role, is_authenticated, user_label),
+                html.Div([
+                    dash.page_container,
+                    html.Div(
+                        html.Span(f"Auto-refresh every {REFRESH_MINUTES} min  ·  Microchip Technology  ·  Proprietary and Confidential"),
+                        className='footer-bar',
+                    ),
+                ], id='page-content', className='page-content'),
+            ], className='app-shell'),
         ])
 
+    if not current_user.is_authenticated:
+        return _shell('viewer', is_authenticated=False, user_label='Guest (viewer)')
+
     user_label = f"{current_user.display_name} ({current_user.role})"
-    return html.Div([
-        dcc.Store(id='theme-store', storage_type='local', data='light'),
-        dcc.Store(id='global-area-filter', storage_type='session'),
-        dcc.Interval(id='auto-refresh', interval=REFRESH_MINUTES * 60 * 1000,
-                     n_intervals=0),
-        dcc.Location(id='url', refresh=False),
-        build_navbar(current_user.role, is_authenticated=True),
-        html.Div(dash.page_container, style={'minHeight': 'calc(100vh - 52px)'}),
-        html.Div(
-            html.Span(f"Auto-refresh every {REFRESH_MINUTES} min  ·  Microchip Technology  ·  Proprietary and Confidential"),
-            className='footer-bar',
-        ),
-        # Inject user info into navbar
-        html.Script(f'document.getElementById("navbar-user").textContent = "{user_label}";'),
-    ])
+    return _shell(current_user.role, is_authenticated=True, user_label=user_label)
 
 
 app.layout = serve_layout

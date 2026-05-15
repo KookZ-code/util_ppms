@@ -133,3 +133,4 @@ $RECYCLE.BIN/
 *.bak
 *.orig
 *.rej
+.gstack/
