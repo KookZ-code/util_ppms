@@ -30,10 +30,34 @@ def _build_where(otc, ec, sc, ac, mid, start_date, end_date, areas, machines,
     phs_jt = ', '.join(f"'{j}'" for j in job_types)
     clauses = [f"[{sc}] IN ({phs_jt})"]
     params = {}
-    if start_date:
-        clauses.append(f"[{otc}] >= :start_date"); params['start_date'] = start_date
-    if end_date:
-        clauses.append(f"[{otc}] < DATEADD(DAY, 1, CAST(:end_date AS DATE))"); params['end_date'] = end_date
+
+    # Night shift crosses calendar days: 19:00 prev-day → 06:59 selected-day
+    # Day shift: 07:00–18:59 on the selected date
+    if shift == 'NIGHT' and (start_date or end_date):
+        # Night shift crosses calendar days: 19:00 prev-day → 06:59 selected-day
+        # e.g. "May 18 Night" → datex >= 2026-05-17 19:00 AND datex < 2026-05-18 07:00
+        # Must cast DATE → DATETIME before DATEADD(HOUR, ...)
+        if start_date:
+            clauses.append(
+                f"[{otc}] >= DATEADD(HOUR, 19, CAST(DATEADD(DAY, -1, CAST(:start_date AS DATE)) AS DATETIME))"
+            )
+            params['start_date'] = start_date
+        if end_date:
+            clauses.append(
+                f"[{otc}] < DATEADD(HOUR, 7, CAST(CAST(:end_date AS DATE) AS DATETIME))"
+            )
+            params['end_date'] = end_date
+    else:
+        if start_date:
+            clauses.append(f"[{otc}] >= :start_date"); params['start_date'] = start_date
+        if end_date:
+            clauses.append(f"[{otc}] < DATEADD(DAY, 1, CAST(:end_date AS DATE))"); params['end_date'] = end_date
+        if shift == 'DAY':
+            clauses.append(f"DATEPART(HOUR, [{otc}]) BETWEEN 7 AND 18")
+        elif shift == 'NIGHT':
+            # No date selected — fall back to hour filter only
+            clauses.append(f"(DATEPART(HOUR, [{otc}]) >= 19 OR DATEPART(HOUR, [{otc}]) < 7)")
+
     if sql_areas:
         phs = ', '.join(f":area_{i}" for i in range(len(sql_areas)))
         clauses.append(f"[{ac}] IN ({phs})")
@@ -42,10 +66,6 @@ def _build_where(otc, ec, sc, ac, mid, start_date, end_date, areas, machines,
         mphs = ', '.join(f":machine_{i}" for i in range(len(machines)))
         clauses.append(f"[{mid}] IN ({mphs})")
         for i, m in enumerate(machines): params[f'machine_{i}'] = m
-    if shift == 'DAY':
-        clauses.append(f"DATEPART(HOUR, [{otc}]) BETWEEN 7 AND 18")
-    elif shift == 'NIGHT':
-        clauses.append(f"DATEPART(HOUR, [{otc}]) NOT BETWEEN 7 AND 18")
     return "WHERE " + " AND ".join(clauses), params
 
 
@@ -551,7 +571,7 @@ layout = html.Div([
                     id='setup-type-toggle',
                     options=[
                         {'label': 'All Setup',              'value': 'ALL'},
-                        {'label': 'SETUP (Technician)',      'value': 'SETUP'},
+                        {'label': 'SETUP (Technician)',      'value': 'SETUP'},   # includes CONVERT + CHANGE CAP
                         {'label': 'SETUP BY OPERATOR',       'value': 'SETUP BY OPERATOR'},
                     ],
                     value='ALL', clearable=False,
@@ -744,7 +764,12 @@ def _run_queries(job_types, start_date, end_date, areas, machines, shift,
         logging.warning(f"downtime detail API failed ({_api_err}), fallback to DB")
 
     from db import query_df
-    from config import VIEW_NAME, COLUMN_MAP
+    from config import VIEW_NAME, SETUP_VIEW_NAME, COLUMN_MAP
+
+    # Setup job types → vw_job_setup (all machines); M/C DOWN → vw_job_nokey (key only)
+    _SETUP_JOB_TYPES = {'SETUP', 'SETUP BY OPERATOR', 'CLEAN MOLD', 'CONVERT', 'CHANGE CAP'}
+    if any(jt in _SETUP_JOB_TYPES for jt in job_types):
+        VIEW_NAME = SETUP_VIEW_NAME
 
     rc  = COLUMN_MAP.get('downtime_reason', 'cause')        or 'cause'
     sym = COLUMN_MAP.get('symptom',         'des_job')      or 'des_job'
@@ -959,13 +984,6 @@ def _register_section(prefix, job_types, accent_color, bar_label, table_id,
     # ── 1. Data callback — query DB, store data, render trend only ───────────
     extra_inputs = [Input(type_toggle_id, 'value')] if type_toggle_id else []
 
-    @callback(
-        Output(f'{prefix}-data-store',  'data'),
-        Output(f'{prefix}-click-filter','data'),   # clear on filter change
-        Output(f'{prefix}-trend',       'figure'),
-        *_FILTER_INPUTS,
-        *extra_inputs,
-    )
     def update_charts(*args):
         # Parse args: 6 filter inputs + optional toggle
         n_intervals, start_date, end_date, areas, machines, shift = args[:6]
@@ -979,6 +997,9 @@ def _register_section(prefix, job_types, accent_color, bar_label, table_id,
             active_types = [type_filter]
             if type_filter == 'SETUP BY OPERATOR':
                 active_types = ['SETUP BY OPERATOR', 'CLEAN MOLD']
+            elif type_filter == 'SETUP':
+                # Technician setup: SETUP + CONVERT (all areas) + CHANGE CAP (WB only, no other area has it)
+                active_types = ['SETUP', 'CONVERT', 'CHANGE CAP']
 
         ef = _empty()
         try:
@@ -986,6 +1007,13 @@ def _register_section(prefix, job_types, accent_color, bar_label, table_id,
                 _run_queries(active_types, start_date, end_date, areas, machines, shift,
                              reason_col=reason_col)
         except Exception as e:
+            import traceback
+            err = f"[{prefix}] _run_queries error: {e}\n{traceback.format_exc()}"
+            try:
+                with open(r'C:\Users\b04469\AppData\Local\Temp\dash_cb_error.txt','a') as f:
+                    f.write(err + '\n---\n')
+            except Exception:
+                pass
             return None, None, ef
 
         # Relabel CLEAN MOLD rows in the event-detail table as
@@ -1047,15 +1075,19 @@ def _register_section(prefix, job_types, accent_color, bar_label, table_id,
         }
         return store, None, trend
 
+    # Rename function to be unique per section — Dash 3.x requires unique function names
+    update_charts.__name__    = f'_update_charts_{prefix}'
+    update_charts.__qualname__ = f'_update_charts_{prefix}'
+    # Apply callback decorator manually (after rename so Dash sees unique name)
+    callback(
+        Output(f'{prefix}-data-store',  'data'),
+        Output(f'{prefix}-click-filter','data'),
+        Output(f'{prefix}-trend',       'figure'),
+        *_FILTER_INPUTS,
+        *extra_inputs,
+    )(update_charts)
+
     # ── 2. Click-state callback ───────────────────────────────────────────────
-    @callback(
-        Output(f'{prefix}-click-filter', 'data', allow_duplicate=True),
-        Input(f'{prefix}-trend',      'clickData'),
-        Input(f'{prefix}-pareto',     'clickData'),
-        Input(f'{prefix}-by-machine', 'clickData'),
-        Input(f'{prefix}-clear-click','n_clicks'),
-        prevent_initial_call=True,
-    )
     def handle_click(trend_click, pareto_click, machine_click, clear_clicks):
         triggered = dash.ctx.triggered_id
         if triggered == f'{prefix}-clear-click':
@@ -1074,20 +1106,20 @@ def _register_section(prefix, job_types, accent_color, bar_label, table_id,
             return {'source': 'machine', 'key': 'machine_id', 'value': pt['y']}
         return dash.no_update
 
+    handle_click.__name__    = f'_handle_click_{prefix}'
+    handle_click.__qualname__ = f'_handle_click_{prefix}'
+    callback(
+        Output(f'{prefix}-click-filter', 'data', allow_duplicate=True),
+        Input(f'{prefix}-trend',      'clickData'),
+        Input(f'{prefix}-pareto',     'clickData'),
+        Input(f'{prefix}-by-machine', 'clickData'),
+        Input(f'{prefix}-clear-click','n_clicks'),
+        prevent_initial_call=True,
+    )(handle_click)
+
     # ── 3. KPI + Charts + Table + Indicator (all respond to click) ───────────
     extra_outputs = [Output('dt-events-raw', 'data')] if prefix == 'dt' else []
 
-    @callback(
-        Output(f'{prefix}-kpi-row',         'children'),
-        Output(f'{prefix}-pareto',          'figure'),
-        Output(f'{prefix}-by-machine',      'figure'),
-        Output(f'{prefix}-table',           'children'),
-        Output(f'{prefix}-click-indicator', 'children'),
-        Output(f'{prefix}-clear-click',     'style'),
-        *extra_outputs,
-        Input(f'{prefix}-data-store',  'data'),
-        Input(f'{prefix}-click-filter','data'),
-    )
     def update_kpi_table(store_data, click_filter):
         hide_btn = {'display': 'none'}
         show_btn = {
@@ -1261,10 +1293,23 @@ def _register_section(prefix, job_types, accent_color, bar_label, table_id,
         machine_fig, _ = _make_machine_bar(filtered_machine)
 
         if prefix == 'dt':
-            # For dt: pass events data to store, let filter callback render table
             ev_raw = store_data.get('events', '')
             return kpis, pareto_fig, machine_fig, table, indicator, btn_style, ev_raw
         return kpis, pareto_fig, machine_fig, table, indicator, btn_style
+
+    update_kpi_table.__name__    = f'_update_kpi_table_{prefix}'
+    update_kpi_table.__qualname__ = f'_update_kpi_table_{prefix}'
+    callback(
+        Output(f'{prefix}-kpi-row',         'children'),
+        Output(f'{prefix}-pareto',          'figure'),
+        Output(f'{prefix}-by-machine',      'figure'),
+        Output(f'{prefix}-table',           'children'),
+        Output(f'{prefix}-click-indicator', 'children'),
+        Output(f'{prefix}-clear-click',     'style'),
+        *extra_outputs,
+        Input(f'{prefix}-data-store',  'data'),
+        Input(f'{prefix}-click-filter','data'),
+    )(update_kpi_table)
 
 
 # ── Register both sections ────────────────────────────────────────────────────
@@ -1274,7 +1319,7 @@ _sym_col = _CM.get('symptom', 'des_job') or 'des_job'
 _register_section('dt',    ['M/C DOWN'],
                   RED, 'Downtime Hours', 'dt-detail-table',
                   reason_col=_sym_col)
-_register_section('setup', ['SETUP', 'SETUP BY OPERATOR', 'CLEAN MOLD'],
+_register_section('setup', ['SETUP', 'SETUP BY OPERATOR', 'CLEAN MOLD', 'CONVERT', 'CHANGE CAP'],
                   LIGHT_BLUE, 'Setup Hours', 'setup-detail-table',
                   type_toggle_id='setup-type-toggle')
 

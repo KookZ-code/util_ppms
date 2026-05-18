@@ -60,8 +60,10 @@ AREA_TARGETS: dict = _parse_targets(
 DASH_HOST = os.getenv('DASH_HOST', '0.0.0.0')
 DASH_PORT = int(os.getenv('DASH_PORT', '8050'))
 
-# Main SQL view
+# Main SQL view (key machines only)
 VIEW_NAME = os.getenv('VIEW_NAME', 'vw_job_nokey')
+# Setup view — includes ALL machines (no flag_key filter) for accurate setup counts
+SETUP_VIEW_NAME = os.getenv('SETUP_VIEW_NAME', 'vw_job_setup')
 MACHINE_TABLE = os.getenv('MACHINE_TABLE', 'dbo.machine')
 
 # Oracle connection (ISO / FS areas)
