@@ -143,16 +143,21 @@ cobot_images/
 doc-revision-tracker/
 clr
 generate_cobot_*.py
-generate_cobot_demo_proposal_ppt.py
-generate_cobot_status_ppt.py
-generate_cobot_status_short_ppt.py
-generate_cobot_vs_manual_ppt.py
 improve_*.py
-improve_ad889_scrap_ppt.py
-improve_assembly_ppt.py
-improve_cobot_ppt.py
 docs/oee-*.md
 docs/oee-*.html
+analyze_*.py
+calc_*.py
+create_boi*.py
+create_da_loading*.py
+create_ppt.py
+create_spool_tracking.py
+create_wb_*.py
+gen_*.js
+generate_industrial_command_preview.py
+inspect_ppt.py
+inspect_slide2_detail.py
+update_da_calculator_model_sheet.py
 
 # Debug/temp scripts inside dashboard (should never be committed)
 dashboard/check_*.py
