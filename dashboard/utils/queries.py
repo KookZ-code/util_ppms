@@ -674,6 +674,161 @@ def inventory_machine_downtime():
     """
 
 
+# ── Wire Bond Package Report queries ─────────────────────────────────────────
+
+def wb_package_options():
+    """Distinct Package Types for WB area from the last 7 days (relative to :date_val)."""
+    return f"""
+        SELECT DISTINCT [Package Type] AS package_type
+        FROM {VIEW_NAME}
+        WHERE [id_operation] = 'WB'
+          AND [Package Type] IS NOT NULL AND [Package Type] != ''
+          AND [datex] >= DATEADD(DAY, -7, :date_val)
+          AND [datex] <  DATEADD(DAY, 1,  :date_val)
+        ORDER BY [Package Type]
+    """
+
+
+def wb_shift_report():
+    """Single query: WB key machines + shift events + last-known package.
+
+    One DB round-trip. Scans vw_job_nokey twice (12-hr shift window + 7-day
+    package window) but both are bounded — avoids the old correlated-subquery
+    N×full-scan pattern.
+
+    Params: shift_start, shift_end, ref_date (= shift_start date as DATE str).
+    Returns one row per (machine × event).  Machines with no shift events
+    appear once with NULL job_type/datex/etc. and package from last 7 days.
+    """
+    from config import MACHINE_TABLE
+    return f"""
+        WITH
+        key_mc AS (
+            SELECT RTRIM(LTRIM([code_machine])) AS code_machine
+            FROM {MACHINE_TABLE}
+            WHERE [id_operation] = 'WB'
+              AND [flag_key] = 1
+              AND ISNULL([flag_delete], 0) != 1
+        ),
+        shift_ev AS (
+            SELECT RTRIM(LTRIM([code_machine])) AS code_machine,
+                   [job_type], [datex], [date_ack], [date_close], [des_job],
+                   ISNULL([Waiting_time], 0)                    AS wait_min,
+                   [Package Type]                               AS package_type,
+                   NULLIF(RTRIM(LTRIM(ISNULL([by_perform], [by_ack]))), '') AS tech_name
+            FROM {VIEW_NAME}
+            WHERE [id_operation] = 'WB'
+              AND [datex]      >= :shift_start
+              AND [datex]      <  :shift_end
+              AND [date_close] IS NOT NULL
+              AND [date_close] >  [datex]
+        ),
+        pkg_scan AS (
+            SELECT RTRIM(LTRIM([code_machine])) AS code_machine,
+                   [Package Type] AS package_type,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY RTRIM(LTRIM([code_machine]))
+                       ORDER BY [datex] DESC
+                   ) AS rn
+            FROM {VIEW_NAME}
+            WHERE [id_operation] = 'WB'
+              AND [Package Type] IS NOT NULL AND [Package Type] != ''
+              AND [datex] >= DATEADD(DAY, -7, CAST(:ref_date AS DATE))
+              AND [datex] <  DATEADD(DAY, 1,  CAST(:ref_date AS DATE))
+        ),
+        last_pkg AS (
+            SELECT code_machine, package_type FROM pkg_scan WHERE rn = 1
+        )
+        SELECT k.code_machine,
+               se.job_type, se.datex, se.date_ack, se.date_close,
+               se.des_job,  se.wait_min, se.tech_name,
+               COALESCE(se.package_type, lp.package_type) AS package_type
+        FROM key_mc k
+        LEFT JOIN shift_ev se ON k.code_machine = se.code_machine
+        LEFT JOIN last_pkg lp  ON k.code_machine = lp.code_machine
+        ORDER BY k.code_machine, se.datex
+    """
+
+
+def wb_machines_with_package():
+    """Kept for backward compatibility. Use wb_shift_report() for new code."""
+    from config import MACHINE_TABLE
+    return f"""
+        SELECT RTRIM(LTRIM([code_machine])) AS code_machine, NULL AS package_type
+        FROM {MACHINE_TABLE}
+        WHERE [id_operation] = 'WB'
+          AND [flag_key] = 1
+          AND ISNULL([flag_delete], 0) != 1
+        ORDER BY [code_machine]
+    """
+
+
+def wb_shift_events(machine_ids=None):
+    """WB job records within the shift window [:shift_start, :shift_end).
+    If machine_ids provided, filters to those machines only (reduces scan).
+    Params: shift_start, shift_end, and optionally km_0..km_N.
+    """
+    mc_filter = ''
+    if machine_ids:
+        phs = ', '.join(f':km_{i}' for i in range(len(machine_ids)))
+        mc_filter = f"AND RTRIM(LTRIM([code_machine])) IN ({phs})"
+    return f"""
+        SELECT RTRIM(LTRIM([code_machine])) AS code_machine,
+               [job_type],
+               [datex],
+               [date_ack],
+               [date_close],
+               [des_job],
+               ISNULL([Waiting_time], 0) AS wait_min,
+               [Package Type]            AS package_type
+        FROM {VIEW_NAME}
+        WHERE [id_operation] = 'WB'
+          AND [datex] >= :shift_start
+          AND [datex] <  :shift_end
+          {mc_filter}
+          AND [date_close] IS NOT NULL
+          AND [date_close] > [datex]
+        ORDER BY [code_machine], [datex]
+    """
+
+
+def wb_last_known_package(machine_ids):
+    """Most recent Package Type (last 180 days) for each machine in list.
+    Kept for backward compatibility; prefer wb_machines_with_package() for new code.
+    Params dict: {m_0: id0, m_1: id1, ...}.
+    """
+    phs = ', '.join(f':m_{i}' for i in range(len(machine_ids)))
+    return f"""
+        SELECT t.[code_machine], t.[package_type]
+        FROM (
+            SELECT RTRIM(LTRIM([code_machine])) AS code_machine,
+                   [Package Type] AS package_type,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY RTRIM(LTRIM([code_machine]))
+                       ORDER BY [datex] DESC
+                   ) AS rn
+            FROM {VIEW_NAME}
+            WHERE RTRIM(LTRIM([code_machine])) IN ({phs})
+              AND [Package Type] IS NOT NULL AND [Package Type] != ''
+              AND [datex] >= DATEADD(DAY, -180, GETDATE())
+        ) t
+        WHERE t.rn = 1
+    """
+
+
+def wb_key_machines():
+    """All WB key machines from machine master (flag_key=1, not deleted)."""
+    from config import MACHINE_TABLE
+    return f"""
+        SELECT RTRIM(LTRIM([code_machine])) AS code_machine
+        FROM {MACHINE_TABLE}
+        WHERE [id_operation] = 'WB'
+          AND [flag_key] = 1
+          AND ISNULL([flag_delete], 0) != 1
+        ORDER BY [code_machine]
+    """
+
+
 def inventory_packages_by_area():
     """Distinct package types per area from job data."""
     from config import MACHINE_TABLE, VIEW_NAME

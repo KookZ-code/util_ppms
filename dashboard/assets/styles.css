@@ -447,6 +447,15 @@ label.filter-label {
   background: var(--card) !important;
 }
 
+/* ── WB Report: Date picker width fix ─────────────────────────────────────── */
+#wb-date-picker .DateInput,
+#wb-date-picker .DateInput_input {
+  width: 108px !important;
+  min-width: 108px !important;
+  font-size: 13px !important;
+  padding: 6px 8px !important;
+}
+
 /* ── Dark Mode: Filter bar inputs ──────────────────────────────────────────── */
 [data-theme="dark"] .DateInput_input,
 [data-theme="dark"] .DateRangePickerInput {
@@ -585,8 +594,10 @@ label.filter-label {
   max-width: 160px;
   white-space: nowrap;
 }
-.sb-logo-title { font-weight: 700; font-size: 13px; color: #fff; display: block; }
-.sb-logo-sub   { font-size: 10px; color: var(--sidebar-muted); display: block; line-height: 1.3; }
+.sb-logo-title   { font-weight: 700; font-size: 13px; color: #fff; display: block; }
+.sb-logo-sub     { font-size: 10px; color: var(--sidebar-muted); display: block; line-height: 1.3; }
+.sb-logo-version { font-size: 9px; color: rgba(255,255,255,0.3); display: block;
+                   letter-spacing: 0.05em; margin-top: 1px; }
 .sidebar.collapsed .sb-logo-text { opacity: 0; max-width: 0; }
 .sidebar.collapsed .sb-logo-dot  { opacity: 0; width: 0; min-width: 0; overflow: hidden; padding: 0; margin: 0; }
 .sidebar.collapsed .sb-header    { justify-content: center; padding: 14px 8px; }
